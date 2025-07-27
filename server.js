@@ -8,6 +8,8 @@ app.use(express.json());
 
 app.post('/create-checkout-session', async (req, res) => {
   const { amount } = req.body;
+console.log('Amount received from frontend:', amount);
+
 
   try {
     const session = await stripe.checkout.sessions.create({
