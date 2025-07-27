@@ -5,7 +5,9 @@ const cors = require('cors');
 
 app.use(cors());
 app.use(express.json());
-
+app.get('/', (req, res) => {
+  res.send('Server is running.');
+});
 app.post('/create-checkout-session', async (req, res) => {
   const { amount } = req.body;
 console.log('Amount received from frontend:', amount);
