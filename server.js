@@ -11,26 +11,30 @@ app.post('/create-checkout-session', async (req, res) => {
 
   try {
     const session = await stripe.checkout.sessions.create({
-      payment_method_collection: 'always',
-      line_items: [{
-        price_data: {
-          currency: 'aud',
-          product_data: {
-            name: 'Chauffeur Booking Fare',
+      line_items: [
+        {
+          price_data: {
+            currency: 'aud',
+            product_data: {
+              name: 'Chauffeur Booking Fare',
+            },
+            unit_amount: amount,
           },
-          unit_amount: amount,
+          quantity: 1,
         },
-        quantity: 1,
-      }],
+      ],
       mode: 'payment',
+      automatic_payment_methods: {
+        enabled: true,
+      },
       success_url: 'https://bookingform-pi.vercel.app/success.html',
       cancel_url: 'https://bookingform-pi.vercel.app/cancel.html',
     });
 
     res.json({ id: session.id });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Payment failed' });
+    console.error('Stripe error:', error.message);
+    res.status(500).json({ error: 'Payment session creation failed' });
   }
 });
 
