@@ -20,13 +20,10 @@ app.use(
 app.use(bodyParser.json());
 
 // Your Gmail OAuth2 setup (fill with your credentials)
-const CLIENT_ID = '816376260321-oe4d12lnjofm3f4oe33pg4rpdjgsvr5v.apps.googleusercontent.com
-';
+const CLIENT_ID = '816376260321-oe4d12lnjofm3f4oe33pg4rpdjgsvr5v.apps.googleusercontent.com';
 const CLIENT_SECRET = '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';
 const REDIRECT_URI = 'https://developers.google.com/oauthplayground';
-const REFRESH_TOKEN = '  "refresh_token": "1//04fxT7EfUUDELCgYIARAAGAQSNwF-L9IrjEP267HotIwpq5jWY4ttFabp7qK4Gm64cCxUH5PTMeOg6yo-vUkXgAvJG1D7jCMYn1I"
-}
-';
+const REFRESH_TOKEN = '1//04fxT7EfUUDELCgYIARAAGAQSNwF-L9IrjEP267HotIwpq5jWY4ttFabp7qK4Gm64cCxUH5PTMeOg6yo-vUkXgAvJG1D7jCMYn1I';
 
 const oAuth2Client = new google.auth.OAuth2(
   CLIENT_ID,
@@ -114,9 +111,6 @@ app.post('/create-checkout-session', async (req, res) => {
       cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
     });
 
-    // Store booking info in session metadata for webhook (optional)
-    // Alternatively, you can pass info in metadata if you want
-
     res.status(200).json({ id: session.id, url: session.url });
   } catch (err) {
     console.error('Stripe error:', err);
@@ -138,18 +132,14 @@ app.post('/webhook', (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // Handle the checkout.session.completed event
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
 
-    // Grab booking details from your DB or from metadata if you added them
-    // Here you might need to fetch or store booking info elsewhere
-    // For demonstration, just sending minimal info
-
+    // Here you might want to retrieve or store more booking details
     const booking = {
       name: session.customer_details?.name || 'N/A',
       email: session.customer_details?.email || 'N/A',
-      phone: 'N/A', // You may store phone in metadata or DB
+      phone: 'N/A',
       pickup: 'N/A',
       dropoff: 'N/A',
       datetime: 'N/A',
@@ -158,7 +148,6 @@ app.post('/webhook', (req, res) => {
       notes: '',
     };
 
-    // Send confirmation email
     sendEmail(booking).catch(console.error);
   }
 
