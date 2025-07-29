@@ -41,8 +41,8 @@ app.post('/create-checkout-session', async (req, res) => {
         },
         quantity: 1
       }],
-      success_url: 'https://yourdomain.com/success.html',  // Replace with your real success URL
-      cancel_url: 'https://yourdomain.com/cancel.html'     // Replace with your real cancel URL
+      success_url: 'https://https://bookingform-pi.vercel.app/success.html', 
+      cancel_url: 'https://https://bookingform-pi.vercel.app/cancel.html'    
     });
 
     return res.status(200).json({ id: session.id, url: session.url });
