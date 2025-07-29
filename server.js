@@ -1,7 +1,7 @@
 const express = require('express');
 const app = express();
 const cors = require('cors');
-const stripe = require('stripe')('sk_test_51N...'); // Replace with your real **LIVE** or **TEST** Stripe Secret Key
+const stripe = require('stripe')('sk_test_51RekxBAc65pROHTAQJaQgffZEGaKTy5ANkq7vOFy3LJM5k2i0IPV7myoAVt904PdLk7FxZIcPGJj76tkAi1SaOT60021lEBL12'); 
 const bodyParser = require('body-parser');
 const path = require('path');
 
