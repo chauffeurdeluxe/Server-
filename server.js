@@ -36,7 +36,8 @@ oAuth2Client.setCredentials({ refresh_token: REFRESH_TOKEN });
 async function sendEmail(booking) {
   try {
     const accessToken = await oAuth2Client.getAccessToken();
-
+    console.log('Access Token:', accessToken.token); 
+    
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
