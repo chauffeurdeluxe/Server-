@@ -108,6 +108,18 @@ app.post('/create-checkout-session', async (req, res) => {
         },
         quantity: 1
       }],
+      // <<== ADD METADATA HERE:
+      metadata: {
+        name,
+        email,
+        phone,
+        pickup,
+        dropoff,
+        datetime,
+        vehicleType,
+        totalFare: totalFare.toString(),
+        notes: notes || ''
+      },
       success_url: 'https://bookingform-pi.vercel.app/success.html',
       cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
     });
@@ -136,17 +148,17 @@ app.post('/webhook', (req, res) => {
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
 
-    // Here you might want to retrieve or store more booking details
+    // <<== USE METADATA FROM STRIPE SESSION HERE:
     const booking = {
-      name: session.customer_details?.name || 'N/A',
-      email: session.customer_details?.email || 'N/A',
-      phone: 'N/A',
-      pickup: 'N/A',
-      dropoff: 'N/A',
-      datetime: 'N/A',
-      vehicleType: 'N/A',
-      totalFare: session.amount_total / 100,
-      notes: '',
+      name: session.metadata.name || 'N/A',
+      email: session.metadata.email || 'N/A',
+      phone: session.metadata.phone || 'N/A',
+      pickup: session.metadata.pickup || 'N/A',
+      dropoff: session.metadata.dropoff || 'N/A',
+      datetime: session.metadata.datetime || 'N/A',
+      vehicleType: session.metadata.vehicleType || 'N/A',
+      totalFare: session.metadata.totalFare || 'N/A',
+      notes: session.metadata.notes || '',
     };
 
     sendEmail(booking).catch(console.error);
