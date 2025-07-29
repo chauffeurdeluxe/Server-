@@ -54,7 +54,7 @@ async function sendEmail(booking) {
 
     const mailOptions = {
       from: 'Chauffeur de Luxe <superiorfutbol@gmail.com>',
-      to: 'superiorfutbol@gmail.com', // You get notified here
+      to: 'chauffeurdeluxe@yahoo.com', // You get notified here
       subject: `New Booking from ${booking.name}`,
       html: `
         <h2>New Chauffeur Booking</h2>
