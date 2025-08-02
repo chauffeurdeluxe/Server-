@@ -5,54 +5,33 @@ const stripe = require('stripe')('sk_test_51RekxBAc65pROHTAQJaQgffZEGaKTy5ANkq7v
 const bodyParser = require('body-parser');
 const nodemailer = require('nodemailer');
 const path = require('path');
-const { google } = require('googleapis');
 
 app.use(cors());
 app.use(express.static('public'));
 
-// To receive raw body for Stripe webhook signature verification
+// Stripe requires raw body for webhook signature verification
 app.use(
   '/webhook',
   express.raw({ type: 'application/json' })
 );
 
-// For other routes parse JSON normally
+// For all other routes
 app.use(bodyParser.json());
 
-// Your Gmail OAuth2 setup (fill with your credentials)
-const CLIENT_ID = '816376260321-oe4d12lnjofm3f4oe33pg4rpdjgsvr5v.apps.googleusercontent.com';
-const CLIENT_SECRET = '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';
-const REDIRECT_URI = 'https://developers.google.com/oauthplayground';
-const REFRESH_TOKEN = '1//04fxT7EfUUDELCgYIARAAGAQSNwF-L9IrjEP267HotIwpq5jWY4ttFabp7qK4Gm64cCxUH5PTMeOg6yo-vUkXgAvJG1D7jCMYn1I';
-
-const oAuth2Client = new google.auth.OAuth2(
-  CLIENT_ID,
-  CLIENT_SECRET,
-  REDIRECT_URI
-);
-
-oAuth2Client.setCredentials({ refresh_token: REFRESH_TOKEN });
+// Setup nodemailer using Gmail App Password
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: 'superiorfutbol@gmail.com',
+    pass: 'nkbc wwqg fsit xkxz', 
+  },
+});
 
 async function sendEmail(booking) {
   try {
-    const accessToken = await oAuth2Client.getAccessToken();
-    console.log('Access Token:', accessToken.token); 
-    
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        type: 'OAuth2',
-        user: 'superiorfutbol@gmail.com',
-        clientId: CLIENT_ID,
-        clientSecret: CLIENT_SECRET,
-        refreshToken: REFRESH_TOKEN,
-        accessToken: accessToken.token,
-      },
-    });
-
     const mailOptions = {
       from: 'Chauffeur de Luxe <superiorfutbol@gmail.com>',
-      to: 'chauffeurdeluxe@yahoo.com', // You get notified here
+      to: 'chauffeurdeluxe@yahoo.com',
       subject: `New Booking from ${booking.name}`,
       html: `
         <h2>New Chauffeur Booking</h2>
@@ -69,6 +48,7 @@ async function sendEmail(booking) {
     };
 
     const result = await transporter.sendMail(mailOptions);
+    console.log('Email sent:', result.response);
     return result;
   } catch (error) {
     console.error('Email sending error:', error);
@@ -108,7 +88,6 @@ app.post('/create-checkout-session', async (req, res) => {
         },
         quantity: 1
       }],
-      // <<== ADD METADATA HERE:
       metadata: {
         name,
         email,
@@ -131,7 +110,6 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// Your webhook secret from Stripe dashboard
 const endpointSecret = 'whsec_6mSUcXvKfMuBgqS6YMBlpVBXb2pu4kIn';
 
 app.post('/webhook', (req, res) => {
@@ -141,14 +119,13 @@ app.post('/webhook', (req, res) => {
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
   } catch (err) {
-    console.error('Webhook signature verification failed.', err.message);
+    console.error('Webhook signature verification failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
 
-    // <<== USE METADATA FROM STRIPE SESSION HERE:
     const booking = {
       name: session.metadata.name || 'N/A',
       email: session.metadata.email || 'N/A',
