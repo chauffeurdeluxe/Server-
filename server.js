@@ -125,6 +125,8 @@ app.post('/webhook', (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
+console.log('✅ Webhook triggered:', event.type);
+  
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
 
