@@ -1,39 +1,32 @@
 const express = require('express');
-const app = express();
 const cors = require('cors');
-const stripe = require('stripe')('sk_test_51RekxBAc65pROHTAQJaQgffZEGaKTy5ANkq7vOFy3LJM5k2i0IPV7myoAVt904PdLk7FxZIcPGJj76tkAi1SaOT60021lEBL12'); 
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const bodyParser = require('body-parser');
 const nodemailer = require('nodemailer');
 const path = require('path');
+require('dotenv').config();
+
+const app = express();
 
 app.use(cors());
 app.use(express.static('public'));
 
-// Stripe requires raw body for webhook signature verification
-app.use(
-  '/webhook',
-  express.raw({ type: 'application/json' })
-);
-
-// For all other routes
+app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(bodyParser.json());
 
-// Setup nodemailer using Gmail App Password
 const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true,
+  service: 'gmail',
   auth: {
-    user: 'superiorfutbol@gmail.com',
-    pass: 'nkbc wwqg fsit xkxz',
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
   },
 });
 
 async function sendEmail(booking) {
   try {
     const mailOptions = {
-      from: 'Chauffeur de Luxe <superiorfutbol@gmail.com>',
-      to: 'chauffeurdeluxe@yahoo.com',
+      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_TO,
       subject: `New Booking from ${booking.name}`,
       html: `
         <h2>New Chauffeur Booking</h2>
@@ -112,21 +105,17 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-const endpointSecret = 'whsec_6mSUcXvKfMuBgqS6YMBlpVBXb2pu4kIn';
-
 app.post('/webhook', (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
   try {
-    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     console.error('Webhook signature verification failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-console.log('✅ Webhook triggered:', event.type);
-  
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
 
