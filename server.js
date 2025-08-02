@@ -20,10 +20,12 @@ app.use(bodyParser.json());
 
 // Setup nodemailer using Gmail App Password
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true,
   auth: {
     user: 'superiorfutbol@gmail.com',
-    pass: 'nkbc wwqg fsit xkxz', 
+    pass: 'nkbc wwqg fsit xkxz',
   },
 });
 
