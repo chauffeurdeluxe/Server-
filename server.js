@@ -60,7 +60,9 @@ app.post('/create-checkout-session', async (req, res) => {
     datetime,
     vehicleType,
     totalFare,
-    notes,
+    distanceKm, 
+    durationMin,
+    notes.
   } = req.body;
 
   if (!email || !totalFare || totalFare < 10) {
@@ -128,6 +130,8 @@ app.post('/webhook', (req, res) => {
       datetime: session.metadata.datetime || 'N/A',
       vehicleType: session.metadata.vehicleType || 'N/A',
       totalFare: session.metadata.totalFare || 'N/A',
+      distanceKm: distanceKm ? distanceKm.toString() : 'N/A', 
+      durationMin: durationMin ? durationMin.toString() : 'N/A'
       notes: session.metadata.notes || '',
     };
 
