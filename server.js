@@ -38,6 +38,8 @@ async function sendEmail(booking) {
         <p><strong>Pickup Time:</strong> ${booking.datetime}</p>
         <p><strong>Vehicle Type:</strong> ${booking.vehicleType}</p>
         <p><strong>Total Fare:</strong> $${booking.totalFare}</p>
+        <p><strong>Distance:</strong> ${booking.distanceKm} km</p>
+        <p><strong>Estimated Time:</strong> ${booking.durationMin} min</p>
         <p><strong>Notes:</strong> ${booking.notes || 'None'}</p>
       `,
     };
@@ -60,9 +62,9 @@ app.post('/create-checkout-session', async (req, res) => {
     datetime,
     vehicleType,
     totalFare,
-    distanceKm, 
+    distanceKm,
     durationMin,
-    notes.
+    notes
   } = req.body;
 
   if (!email || !totalFare || totalFare < 10) {
@@ -94,7 +96,9 @@ app.post('/create-checkout-session', async (req, res) => {
         datetime,
         vehicleType,
         totalFare: totalFare.toString(),
-        notes: notes || ''
+        notes: notes || '',
+        distanceKm: distanceKm ? distanceKm.toString() : 'N/A',
+        durationMin: durationMin ? durationMin.toString() : 'N/A'
       },
       success_url: 'https://bookingform-pi.vercel.app/success.html',
       cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
@@ -130,8 +134,8 @@ app.post('/webhook', (req, res) => {
       datetime: session.metadata.datetime || 'N/A',
       vehicleType: session.metadata.vehicleType || 'N/A',
       totalFare: session.metadata.totalFare || 'N/A',
-      distanceKm: distanceKm ? distanceKm.toString() : 'N/A', 
-      durationMin: durationMin ? durationMin.toString() : 'N/A'
+      distanceKm: session.metadata.distanceKm || 'N/A',
+      durationMin: session.metadata.durationMin || 'N/A',
       notes: session.metadata.notes || '',
     };
 
@@ -143,4 +147,3 @@ app.post('/webhook', (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
