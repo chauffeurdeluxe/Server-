@@ -38,7 +38,7 @@ const transporter = nodemailer.createTransport({
 app.post('/partner-form', upload.fields([
   { name: 'insuranceFile', maxCount: 1 },
   { name: 'regoFile', maxCount: 1 },
-  { name: 'abnFile', maxCount: 1 }
+  { name: 'licenseFile', maxCount: 1 }
 ]), async (req, res) => {
   try {
     const data = req.body;
