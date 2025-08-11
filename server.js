@@ -27,8 +27,8 @@ const upload = multer({ storage });
 app.use(cors());
 app.use(express.static('public'));
 
+// Webhook route needs raw body parser
 app.use('/webhook', express.raw({ type: 'application/json' }));
-app.use(bodyParser.json());
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -64,7 +64,8 @@ async function sendEmail(booking) {
 }
 
 // ==== BOOKING ROUTES ====
-app.post('/create-checkout-session', async (req, res) => {
+// Apply bodyParser.json() only here, so multipart partner form isn't affected
+app.post('/create-checkout-session', bodyParser.json(), async (req, res) => {
   const { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes } = req.body;
   if (!email || !totalFare || totalFare < 10) return res.status(400).json({ error: 'Invalid booking data.' });
 
