@@ -11,7 +11,10 @@ const cron = require('node-cron');
 
 const app = express();
 
-// ===== Multer storage for uploaded files =====
+app.use(cors());
+app.use(express.static('public'));
+
+// ✅ Multer storage for uploaded files
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadPath = path.join(__dirname, 'uploads');
@@ -24,19 +27,63 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-app.use(cors());
-app.use(express.static('public'));
-
-// ===== Stripe Webhook requires raw body =====
-app.use('/webhook', express.raw({ type: 'application/json' }));
-
-// ===== Booking form uses JSON =====
-app.use('/create-checkout-session', bodyParser.json());
-
+// ✅ Nodemailer setup
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
+
+// ==== PARTNER/DRIVER FORM ====
+// This MUST be above express.json/bodyParser for multipart forms
+app.post('/partner-form', upload.fields([
+  { name: 'insuranceFile', maxCount: 1 },
+  { name: 'regoFile', maxCount: 1 },
+  { name: 'abnFile', maxCount: 1 }
+]), async (req, res) => {
+  try {
+    const data = req.body;
+    const files = req.files;
+
+    // Save driver data to JSON
+    let drivers = [];
+    const dataPath = path.join(__dirname, 'drivers.json');
+    if (fs.existsSync(dataPath)) drivers = JSON.parse(fs.readFileSync(dataPath));
+    const driverRecord = { ...data, files, submittedAt: new Date() };
+    drivers.push(driverRecord);
+    fs.writeFileSync(dataPath, JSON.stringify(drivers, null, 2));
+
+    // Send email with attachments
+    const attachments = [];
+    for (let field in files) {
+      attachments.push({ filename: files[field][0].originalname, path: files[field][0].path });
+    }
+    await transporter.sendMail({
+      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_TO,
+      subject: `New Driver Partner Submission - ${data.fullName}`,
+      html: `
+        <h2>Driver Partner Application</h2>
+        <p><strong>Company:</strong> ${data.companyName}</p>
+        <p><strong>Name:</strong> ${data.fullName}</p>
+        <p><strong>Email:</strong> ${data.email}</p>
+        <p><strong>Phone:</strong> ${data.phone}</p>
+        <p><strong>Car:</strong> ${data.carMake} ${data.carModel} (${data.carYear})</p>
+        <p><strong>Registration Expiry:</strong> ${data.regoExpiry}</p>
+        <p><strong>Insurance Expiry:</strong> ${data.insuranceExpiry}</p>
+      `,
+      attachments
+    });
+
+    res.status(200).json({ message: 'Form submitted successfully' });
+  } catch (err) {
+    console.error('Partner form error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ✅ Body parsers AFTER multipart routes
+app.use('/webhook', express.raw({ type: 'application/json' }));
+app.use(bodyParser.json());
 
 // ==== BOOKING EMAIL FUNCTION ====
 async function sendEmail(booking) {
@@ -111,50 +158,7 @@ app.post('/webhook', (req, res) => {
   res.json({ received: true });
 });
 
-// ==== PARTNER/DRIVER FORM ====
-// Note: NO bodyParser.json() here, multer handles it
-app.post('/partner-form', upload.fields([
-  { name: 'insuranceFile', maxCount: 1 },
-  { name: 'regoFile', maxCount: 1 },
-  { name: 'abnFile', maxCount: 1 }
-]), async (req, res) => {
-  const data = req.body;
-  const files = req.files;
-
-  // Save driver data to JSON
-  let drivers = [];
-  const dataPath = path.join(__dirname, 'drivers.json');
-  if (fs.existsSync(dataPath)) drivers = JSON.parse(fs.readFileSync(dataPath));
-  const driverRecord = { ...data, files, submittedAt: new Date() };
-  drivers.push(driverRecord);
-  fs.writeFileSync(dataPath, JSON.stringify(drivers, null, 2));
-
-  // Send email with attachments
-  const attachments = [];
-  for (let field in files) {
-    attachments.push({ filename: files[field][0].originalname, path: files[field][0].path });
-  }
-  await transporter.sendMail({
-    from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-    to: process.env.EMAIL_TO,
-    subject: `New Driver Partner Submission - ${data.fullName}`,
-    html: `
-      <h2>Driver Partner Application</h2>
-      <p><strong>Company:</strong> ${data.companyName}</p>
-      <p><strong>Name:</strong> ${data.fullName}</p>
-      <p><strong>Email:</strong> ${data.email}</p>
-      <p><strong>Phone:</strong> ${data.phone}</p>
-      <p><strong>Car:</strong> ${data.carMake} ${data.carModel} (${data.carYear})</p>
-      <p><strong>Registration Expiry:</strong> ${data.regoExpiry}</p>
-      <p><strong>Insurance Expiry:</strong> ${data.insuranceExpiry}</p>
-    `,
-    attachments
-  });
-
-  res.status(200).json({ message: 'Form submitted successfully' });
-});
-
-// ==== RENEWAL REMINDER (runs daily at 9am) ====
+// ==== RENEWAL REMINDER ====
 cron.schedule('0 9 * * *', () => {
   const dataPath = path.join(__dirname, 'drivers.json');
   if (!fs.existsSync(dataPath)) return;
