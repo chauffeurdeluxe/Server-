@@ -11,7 +11,7 @@ const cron = require('node-cron');
 
 const app = express();
 
-// Multer storage for uploaded files
+// ===== Multer storage for uploaded files =====
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadPath = path.join(__dirname, 'uploads');
@@ -27,8 +27,11 @@ const upload = multer({ storage });
 app.use(cors());
 app.use(express.static('public'));
 
-// Webhook route needs raw body parser
+// ===== Stripe Webhook requires raw body =====
 app.use('/webhook', express.raw({ type: 'application/json' }));
+
+// ===== Booking form uses JSON =====
+app.use('/create-checkout-session', bodyParser.json());
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -64,8 +67,7 @@ async function sendEmail(booking) {
 }
 
 // ==== BOOKING ROUTES ====
-// Apply bodyParser.json() only here, so multipart partner form isn't affected
-app.post('/create-checkout-session', bodyParser.json(), async (req, res) => {
+app.post('/create-checkout-session', async (req, res) => {
   const { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes } = req.body;
   if (!email || !totalFare || totalFare < 10) return res.status(400).json({ error: 'Invalid booking data.' });
 
@@ -110,6 +112,7 @@ app.post('/webhook', (req, res) => {
 });
 
 // ==== PARTNER/DRIVER FORM ====
+// Note: NO bodyParser.json() here, multer handles it
 app.post('/partner-form', upload.fields([
   { name: 'insuranceFile', maxCount: 1 },
   { name: 'regoFile', maxCount: 1 },
@@ -163,7 +166,7 @@ cron.schedule('0 9 * * *', () => {
     const regoDate = new Date(driver.regoExpiry);
     const insuranceDate = new Date(driver.insuranceExpiry);
 
-    [ { type: 'Registration', date: regoDate }, { type: 'Insurance', date: insuranceDate } ]
+    [{ type: 'Registration', date: regoDate }, { type: 'Insurance', date: insuranceDate }]
       .forEach(item => {
         const diffDays = Math.ceil((item.date - today) / (1000 * 60 * 60 * 24));
         if (diffDays === 30) {
