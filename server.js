@@ -8,13 +8,15 @@ const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
 const cron = require('node-cron');
+const PDFDocument = require('pdfkit');
+const streamBuffers = require('stream-buffers');
 
 const app = express();
 
 app.use(cors());
 app.use(express.static('public'));
 
-// ✅ Multer storage for uploaded files
+// Multer setup (unchanged)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadPath = path.join(__dirname, 'uploads');
@@ -27,14 +29,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ✅ Nodemailer setup
+// Nodemailer setup (unchanged)
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
-// ==== PARTNER/DRIVER FORM ====
-// This MUST be above express.json/bodyParser for multipart forms
+// Partner form route (unchanged)
 app.post('/partner-form', upload.fields([
   { name: 'insuranceFile', maxCount: 1 },
   { name: 'regoFile', maxCount: 1 },
@@ -44,7 +45,6 @@ app.post('/partner-form', upload.fields([
     const data = req.body;
     const files = req.files;
 
-    // Save driver data to JSON
     let drivers = [];
     const dataPath = path.join(__dirname, 'drivers.json');
     if (fs.existsSync(dataPath)) drivers = JSON.parse(fs.readFileSync(dataPath));
@@ -52,7 +52,6 @@ app.post('/partner-form', upload.fields([
     drivers.push(driverRecord);
     fs.writeFileSync(dataPath, JSON.stringify(drivers, null, 2));
 
-    // Send email with attachments
     const attachments = [];
     for (let field in files) {
       attachments.push({ filename: files[field][0].originalname, path: files[field][0].path });
@@ -81,11 +80,11 @@ app.post('/partner-form', upload.fields([
   }
 });
 
-// ✅ Body parsers AFTER multipart routes
+// Body parsers AFTER multipart routes
 app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(bodyParser.json());
 
-// ==== BOOKING EMAIL FUNCTION ====
+// Booking email function (unchanged)
 async function sendEmail(booking) {
   try {
     const mailOptions = {
@@ -113,7 +112,102 @@ async function sendEmail(booking) {
   }
 }
 
-// ==== BOOKING ROUTES ====
+// Generate PDF Invoice and email client
+async function sendInvoicePDF(booking, sessionId) {
+  try {
+    // Create a PDF document in memory
+    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    const bufferStream = new streamBuffers.WritableStreamBuffer();
+
+    doc.pipe(bufferStream);
+
+    // Logo (optional) - simple text for now to match your branding
+    doc
+      .fontSize(20)
+      .fillColor('#B9975B') // Gold color
+      .text('CHAUFFEUR DE LUXE', { align: 'center' });
+    doc
+      .fontSize(12)
+      .fillColor('black')
+      .text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
+    doc.moveDown();
+
+    // Invoice title
+    doc
+      .fontSize(18)
+      .fillColor('black')
+      .text('Invoice', { align: 'center' });
+    doc.moveDown();
+
+    // Business info
+    doc
+      .fontSize(12)
+      .text('Business Name: Chauffeur de Luxe')
+      .text('ABN: ______________________ (to be filled)')
+      .moveDown();
+
+    // Booking info
+    doc
+      .fontSize(12)
+      .text(`Invoice Number: ${sessionId}`)
+      .text(`Date: ${new Date().toLocaleDateString()}`)
+      .moveDown();
+
+    // Client info
+    doc
+      .fontSize(12)
+      .text(`Billed To:`)
+      .text(`Name: ${booking.name}`)
+      .text(`Email: ${booking.email}`)
+      .text(`Phone: ${booking.phone}`)
+      .moveDown();
+
+    // Booking details table-like
+    doc
+      .text(`Pickup: ${booking.pickup}`)
+      .text(`Dropoff: ${booking.dropoff}`)
+      .text(`Pickup Time: ${booking.datetime}`)
+      .text(`Vehicle Type: ${booking.vehicleType}`)
+      .moveDown();
+
+    doc
+      .text(`Distance: ${booking.distanceKm} km`)
+      .text(`Estimated Duration: ${booking.durationMin} min`)
+      .text(`Notes: ${booking.notes || 'None'}`)
+      .moveDown();
+
+    // Fare
+    doc
+      .fontSize(14)
+      .text(`Total Fare: $${booking.totalFare}`, { align: 'right' });
+
+    doc.end();
+
+    // Wait for PDF generation to finish
+    bufferStream.on('finish', async () => {
+      const pdfBuffer = bufferStream.getContents();
+
+      // Send email with PDF attached to client
+      await transporter.sendMail({
+        from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+        to: booking.email,
+        subject: 'Your Chauffeur de Luxe Invoice',
+        text: 'Please find your invoice attached.',
+        attachments: [
+          {
+            filename: 'invoice.pdf',
+            content: pdfBuffer,
+            contentType: 'application/pdf'
+          }
+        ]
+      });
+    });
+  } catch (err) {
+    console.error('Invoice PDF sending error:', err);
+  }
+}
+
+// Booking routes (unchanged except webhook calls sendInvoicePDF)
 app.post('/create-checkout-session', async (req, res) => {
   const { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes } = req.body;
   if (!email || !totalFare || totalFare < 10) return res.status(400).json({ error: 'Invalid booking data.' });
@@ -154,11 +248,14 @@ app.post('/webhook', (req, res) => {
     sendEmail({
       name: s.metadata.name, email: s.metadata.email, phone: s.metadata.phone, pickup: s.metadata.pickup, dropoff: s.metadata.dropoff, datetime: s.metadata.datetime, vehicleType: s.metadata.vehicleType, totalFare: s.metadata.totalFare, distanceKm: s.metadata.distanceKm, durationMin: s.metadata.durationMin, notes: s.metadata.notes
     });
+    sendInvoicePDF({
+      name: s.metadata.name, email: s.metadata.email, phone: s.metadata.phone, pickup: s.metadata.pickup, dropoff: s.metadata.dropoff, datetime: s.metadata.datetime, vehicleType: s.metadata.vehicleType, totalFare: s.metadata.totalFare, distanceKm: s.metadata.distanceKm, durationMin: s.metadata.durationMin, notes: s.metadata.notes
+    }, s.id);
   }
   res.json({ received: true });
 });
 
-// ==== RENEWAL REMINDER ====
+// Renewal reminder (unchanged)
 cron.schedule('0 9 * * *', () => {
   const dataPath = path.join(__dirname, 'drivers.json');
   if (!fs.existsSync(dataPath)) return;
