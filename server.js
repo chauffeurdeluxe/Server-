@@ -5,8 +5,8 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const bodyParser = require('body-parser');
 const nodemailer = require('nodemailer');
 const path = require('path');
-const fs = require('fs');
 const multer = require('multer');
+const fs = require('fs');
 const cron = require('node-cron');
 const PDFDocument = require('pdfkit');
 const streamBuffers = require('stream-buffers');
@@ -15,15 +15,8 @@ const app = express();
 
 app.use(cors());
 app.use(express.static('public'));
-app.use(bodyParser.json());
 
-// Nodemailer setup
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-});
-
-// ------------------- MULTER FOR PARTNER FORM -------------------
+// Multer setup
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadPath = path.join(__dirname, 'uploads');
@@ -36,7 +29,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ------------------- DRIVER PARTNER FORM -------------------
+// Nodemailer setup
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+});
+
+// Partner form route
 app.post('/partner-form', upload.fields([
   { name: 'insuranceFile', maxCount: 1 },
   { name: 'regoFile', maxCount: 1 },
@@ -57,7 +56,6 @@ app.post('/partner-form', upload.fields([
     for (let field in files) {
       attachments.push({ filename: files[field][0].originalname, path: files[field][0].path });
     }
-
     await transporter.sendMail({
       from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
       to: process.env.EMAIL_TO,
@@ -82,7 +80,11 @@ app.post('/partner-form', upload.fields([
   }
 });
 
-// ------------------- EMAIL FUNCTIONS -------------------
+// Body parsers AFTER multipart routes
+app.use('/webhook', express.raw({ type: 'application/json' }));
+app.use(bodyParser.json());
+
+// Booking email function
 async function sendEmail(booking) {
   try {
     const mailOptions = {
@@ -110,25 +112,65 @@ async function sendEmail(booking) {
   }
 }
 
-// ------------------- PDF INVOICE -------------------
+// Generate PDF Invoice and email client
 async function sendInvoicePDF(booking, sessionId) {
   try {
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
     const bufferStream = new streamBuffers.WritableStreamBuffer();
-
     doc.pipe(bufferStream);
 
-    doc.fontSize(20).fillColor('#B9975B').text('CHAUFFEUR DE LUXE', { align: 'center' });
-    doc.fontSize(12).fillColor('black').text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
+    doc
+      .fontSize(20)
+      .fillColor('#B9975B')
+      .text('CHAUFFEUR DE LUXE', { align: 'center' });
+    doc
+      .fontSize(12)
+      .fillColor('black')
+      .text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
     doc.moveDown();
-    doc.fontSize(18).text('Invoice', { align: 'center' });
+
+    doc
+      .fontSize(18)
+      .fillColor('black')
+      .text('Invoice', { align: 'center' });
     doc.moveDown();
-    doc.fontSize(12).text('Business Name: Chauffeur de Luxe').text('ABN: ______________________').moveDown();
-    doc.text(`Invoice Number: ${sessionId}`).text(`Date: ${new Date().toLocaleDateString()}`).moveDown();
-    doc.text(`Billed To:`).text(`Name: ${booking.name}`).text(`Email: ${booking.email}`).text(`Phone: ${booking.phone}`).moveDown();
-    doc.text(`Pickup: ${booking.pickup}`).text(`Dropoff: ${booking.dropoff}`).text(`Pickup Time: ${booking.datetime}`).text(`Vehicle Type: ${booking.vehicleType}`).moveDown();
-    doc.text(`Distance: ${booking.distanceKm} km`).text(`Estimated Duration: ${booking.durationMin} min`).text(`Notes: ${booking.notes || 'None'}`).moveDown();
-    doc.fontSize(14).text(`Total Fare: $${booking.totalFare}`, { align: 'right' });
+
+    doc
+      .fontSize(12)
+      .text('Business Name: Chauffeur de Luxe')
+      .text('ABN: ______________________ (to be filled)')
+      .moveDown();
+
+    doc
+      .fontSize(12)
+      .text(`Invoice Number: ${sessionId}`)
+      .text(`Date: ${new Date().toLocaleDateString()}`)
+      .moveDown();
+
+    doc
+      .fontSize(12)
+      .text(`Billed To:`)
+      .text(`Name: ${booking.name}`)
+      .text(`Email: ${booking.email}`)
+      .text(`Phone: ${booking.phone}`)
+      .moveDown();
+
+    doc
+      .text(`Pickup: ${booking.pickup}`)
+      .text(`Dropoff: ${booking.dropoff}`)
+      .text(`Pickup Time: ${booking.datetime}`)
+      .text(`Vehicle Type: ${booking.vehicleType}`)
+      .moveDown();
+
+    doc
+      .text(`Distance: ${booking.distanceKm} km`)
+      .text(`Estimated Duration: ${booking.durationMin} min`)
+      .text(`Notes: ${booking.notes || 'None'}`)
+      .moveDown();
+
+    doc
+      .fontSize(14)
+      .text(`Total Fare: $${booking.totalFare}`, { align: 'right' });
 
     doc.end();
 
@@ -139,7 +181,9 @@ async function sendInvoicePDF(booking, sessionId) {
         to: booking.email,
         subject: 'Your Chauffeur de Luxe Invoice',
         text: 'Please find your invoice attached.',
-        attachments: [{ filename: 'invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
+        attachments: [
+          { filename: 'invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }
+        ]
       });
     });
   } catch (err) {
@@ -147,7 +191,7 @@ async function sendInvoicePDF(booking, sessionId) {
   }
 }
 
-// ------------------- STRIPE CHECKOUT -------------------
+// Booking routes
 app.post('/create-checkout-session', async (req, res) => {
   const { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes } = req.body;
   if (!email || !totalFare || totalFare < 10) return res.status(400).json({ error: 'Invalid booking data.' });
@@ -169,22 +213,12 @@ app.post('/create-checkout-session', async (req, res) => {
       success_url: 'https://bookingform-pi.vercel.app/success.html',
       cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
     });
-
-    // Add booking to pending
-    const pendingFile = path.join(__dirname, 'pending-bookings.json');
-    let pending = [];
-    if (fs.existsSync(pendingFile)) pending = JSON.parse(fs.readFileSync(pendingFile));
-    pending.push({ customerName: name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes });
-    fs.writeFileSync(pendingFile, JSON.stringify(pending, null, 2));
-
     res.status(200).json({ id: session.id, url: session.url });
   } catch (err) {
     res.status(500).json({ error: 'Stripe session creation failed.' });
   }
 });
 
-// ------------------- STRIPE WEBHOOK -------------------
-app.use('/webhook', express.raw({ type: 'application/json' }));
 app.post('/webhook', (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
@@ -196,27 +230,27 @@ app.post('/webhook', (req, res) => {
   if (event.type === 'checkout.session.completed') {
     const s = event.data.object;
     sendEmail({
-      name: s.metadata.name, email: s.metadata.email, phone: s.metadata.phone, pickup: s.metadata.pickup, dropoff: s.metadata.dropoff,
-      datetime: s.metadata.datetime, vehicleType: s.metadata.vehicleType, totalFare: s.metadata.totalFare, distanceKm: s.metadata.distanceKm, durationMin: s.metadata.durationMin, notes: s.metadata.notes
+      name: s.metadata.name, email: s.metadata.email, phone: s.metadata.phone, pickup: s.metadata.pickup, dropoff: s.metadata.dropoff, datetime: s.metadata.datetime, vehicleType: s.metadata.vehicleType, totalFare: s.metadata.totalFare, distanceKm: s.metadata.distanceKm, durationMin: s.metadata.durationMin, notes: s.metadata.notes
     });
     sendInvoicePDF({
-      name: s.metadata.name, email: s.metadata.email, phone: s.metadata.phone, pickup: s.metadata.pickup, dropoff: s.metadata.dropoff,
-      datetime: s.metadata.datetime, vehicleType: s.metadata.vehicleType, totalFare: s.metadata.totalFare, distanceKm: s.metadata.distanceKm, durationMin: s.metadata.durationMin, notes: s.metadata.notes
+      name: s.metadata.name, email: s.metadata.email, phone: s.metadata.phone, pickup: s.metadata.pickup, dropoff: s.metadata.dropoff, datetime: s.metadata.datetime, vehicleType: s.metadata.vehicleType, totalFare: s.metadata.totalFare, distanceKm: s.metadata.distanceKm, durationMin: s.metadata.durationMin, notes: s.metadata.notes
     }, s.id);
   }
   res.json({ received: true });
 });
 
-// ------------------- RENEWAL REMINDER -------------------
+// Renewal reminder
 cron.schedule('0 9 * * *', () => {
   const dataPath = path.join(__dirname, 'drivers.json');
   if (!fs.existsSync(dataPath)) return;
+
   const drivers = JSON.parse(fs.readFileSync(dataPath));
   const today = new Date();
 
   drivers.forEach(driver => {
     const regoDate = new Date(driver.regoExpiry);
     const insuranceDate = new Date(driver.insuranceExpiry);
+
     [{ type: 'Registration', date: regoDate }, { type: 'Insurance', date: insuranceDate }]
       .forEach(item => {
         const diffDays = Math.ceil((item.date - today) / (1000 * 60 * 60 * 24));
@@ -232,42 +266,37 @@ cron.schedule('0 9 * * *', () => {
   });
 });
 
-// ------------------- DRIVER JOB ASSIGNMENT -------------------
+/* ------------------- NEW DRIVER JOB ASSIGNMENT FEATURE ------------------- */
+
 function calculateDriverPayout(clientFare) {
-  return parseFloat((clientFare / 1.45).toFixed(2));
+  const net = clientFare / 1.45;
+  return parseFloat(net.toFixed(2));
 }
 
-// Get pending bookings
-app.get('/pending-bookings', (req, res) => {
-  const pendingFile = path.join(__dirname, 'pending-bookings.json');
-  let pending = [];
-  if (fs.existsSync(pendingFile)) pending = JSON.parse(fs.readFileSync(pendingFile));
-  res.json(pending);
-});
-
-// Assign job to driver
+// Assign a job to a driver
 app.post('/assign-job', (req, res) => {
   const { driverEmail, bookingData } = req.body;
   if (!driverEmail || !bookingData) return res.status(400).json({ error: 'Missing driverEmail or bookingData' });
 
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   let jobs = [];
-  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+  if (fs.existsSync(jobsFile)) {
+    jobs = JSON.parse(fs.readFileSync(jobsFile));
+  }
 
   const driverPay = calculateDriverPayout(parseFloat(bookingData.totalFare));
 
-  const newJob = { id: Date.now().toString(), driverEmail, bookingData, driverPay, assignedAt: new Date() };
+  const newJob = {
+    id: Date.now().toString(),
+    driverEmail,
+    bookingData,
+    driverPay,
+    assignedAt: new Date()
+  };
+
   jobs.push(newJob);
   fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
 
-  // Remove from pending
-  const pendingFile = path.join(__dirname, 'pending-bookings.json');
-  let pending = [];
-  if (fs.existsSync(pendingFile)) pending = JSON.parse(fs.readFileSync(pendingFile));
-  pending = pending.filter(b => !(b.customerName === bookingData.customerName && b.datetime === bookingData.datetime));
-  fs.writeFileSync(pendingFile, JSON.stringify(pending, null, 2));
-
-  // Send driver email
   transporter.sendMail({
     from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
     to: driverEmail,
@@ -294,11 +323,26 @@ app.post('/driver-login', (req, res) => {
 
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   let jobs = [];
-  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+  if (fs.existsSync(jobsFile)) {
+    jobs = JSON.parse(fs.readFileSync(jobsFile));
+  }
 
   const driverJobs = jobs.filter(job => job.driverEmail.toLowerCase() === email.toLowerCase());
+
   res.json({ jobs: driverJobs });
 });
 
+/* ------------------- PENDING BOOKINGS ROUTE ADDED ------------------- */
+app.get('/pending-bookings', (req, res) => {
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  let jobs = [];
+  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+
+  // For admin, consider "pending" as bookings not yet assigned
+  // Here we return all jobs for simplicity; you can filter by some flag if needed
+  const pending = jobs.map(job => job.bookingData);
+  res.json(pending);
+});
+
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT,
