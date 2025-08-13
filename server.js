@@ -282,5 +282,94 @@ cron.schedule('0 9 * * *', () => {
   });
 });
 
+
+/* ------------------- NEW DRIVER JOB ASSIGNMENT FEATURE ------------------- */
+
+// Util function to calculate driver payout from client fare
+function calculateDriverPayout(clientFare) {
+  // Remove GST (10%), tax (10%), profit margin (25%) from client fare
+  // Reverse calculate: net = clientFare / (1 + gst + tax + profit)
+  // gst = 0.10, tax = 0.10, profit = 0.25 => total multiplier = 1.45
+  const net = clientFare / 1.45;
+  return parseFloat(net.toFixed(2));
+}
+
+// Assign a job to a driver
+app.post('/assign-job', (req, res) => {
+  /*
+    Expected body:
+    {
+      driverEmail: string,       // email of driver to assign
+      bookingData: object        // all booking data from client (except payment details)
+    }
+  */
+
+  const { driverEmail, bookingData } = req.body;
+  if (!driverEmail || !bookingData) return res.status(400).json({ error: 'Missing driverEmail or bookingData' });
+
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  let jobs = [];
+  if (fs.existsSync(jobsFile)) {
+    jobs = JSON.parse(fs.readFileSync(jobsFile));
+  }
+
+  // Calculate driver payout (exclude GST/tax/profit)
+  const driverPay = calculateDriverPayout(parseFloat(bookingData.totalFare));
+
+  const newJob = {
+    id: Date.now().toString(),
+    driverEmail,
+    bookingData,
+    driverPay,
+    assignedAt: new Date()
+  };
+
+  jobs.push(newJob);
+  fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+
+  // Send email to driver about assigned job
+  transporter.sendMail({
+    from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+    to: driverEmail,
+    subject: `New Chauffeur Job Assigned`,
+    html: `
+      <h2>You have a new job assigned</h2>
+      <p><strong>Pickup:</strong> ${bookingData.pickup}</p>
+      <p><strong>Dropoff:</strong> ${bookingData.dropoff}</p>
+      <p><strong>Pickup Time:</strong> ${bookingData.datetime}</p>
+      <p><strong>Vehicle Type:</strong> ${bookingData.vehicleType}</p>
+      <p><strong>Driver Payout:</strong> $${driverPay}</p>
+      <p><strong>Notes:</strong> ${bookingData.notes || 'None'}</p>
+      <p>Please login to your driver dashboard to view full details.</p>
+    `
+  }).catch(err => console.error('Error sending job email to driver:', err));
+
+  res.json({ message: 'Job assigned successfully', jobId: newJob.id });
+});
+
+// Driver login route (email only)
+app.post('/driver-login', (req, res) => {
+  /*
+    Body: { email: string }
+    Returns list of jobs assigned to that driver
+  */
+
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email required' });
+
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  let jobs = [];
+  if (fs.existsSync(jobsFile)) {
+    jobs = JSON.parse(fs.readFileSync(jobsFile));
+  }
+
+  // Return only jobs assigned to this email
+  const driverJobs = jobs.filter(job => job.driverEmail.toLowerCase() === email.toLowerCase());
+
+  res.json({ jobs: driverJobs });
+});
+
+
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
