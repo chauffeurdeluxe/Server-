@@ -197,19 +197,22 @@ app.post('/create-checkout-session', async (req, res) => {
 });
 
 /* ------------------- STRIPE WEBHOOK ------------------- */
-app.post('/webhook', (req, res) => {
+app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
+
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
+    console.error('❌ Webhook signature verification failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
   if (event.type === 'checkout.session.completed') {
     const s = event.data.object;
+
     const booking = {
-      id: Date.now().toString(), // <-- added unique ID
+      id: Date.now().toString(),
       name: s.metadata.name,
       email: s.metadata.email,
       phone: s.metadata.phone,
@@ -217,21 +220,30 @@ app.post('/webhook', (req, res) => {
       dropoff: s.metadata.dropoff,
       datetime: s.metadata.datetime,
       vehicleType: s.metadata.vehicleType,
-      totalFare: s.metadata.totalFare,
-      distanceKm: s.metadata.distanceKm,
-      durationMin: s.metadata.durationMin,
-      notes: s.metadata.notes,
-      paidAt: new Date()
+      totalFare: parseFloat(s.metadata.totalFare),
+      distanceKm: s.metadata.distanceKm ? parseFloat(s.metadata.distanceKm) : 0,
+      durationMin: s.metadata.durationMin ? parseFloat(s.metadata.durationMin) : 0,
+      notes: s.metadata.notes || '',
+      paidAt: new Date().toISOString()
     };
 
-    // Save booking for admin
     const bookingsFile = path.join(__dirname, 'bookings.json');
-    let allBookings = [];
-    if (fs.existsSync(bookingsFile)) allBookings = JSON.parse(fs.readFileSync(bookingsFile));
-    allBookings.push(booking);
-    fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
 
-    // Send internal email
+    try {
+      let allBookings = [];
+      if (fs.existsSync(bookingsFile)) {
+        const content = fs.readFileSync(bookingsFile, 'utf-8');
+        allBookings = content ? JSON.parse(content) : [];
+      }
+
+      allBookings.push(booking);
+      fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
+      console.log('✅ Booking saved:', booking.id);
+    } catch (err) {
+      console.error('❌ Error saving booking:', err);
+    }
+
+    // Send internal email to admin
     sendEmail(booking);
 
     // Send invoice PDF to client
