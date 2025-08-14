@@ -383,6 +383,45 @@ cron.schedule('0 9 * * *', () => {
   });
 });
 
+/* ------------------- DRIVER RESPONSE ------------------- */
+app.post('/driver-response', (req, res) => {
+  const { driverEmail, jobId, confirmed } = req.body;
+  if (!driverEmail || !jobId || typeof confirmed !== 'boolean') {
+    return res.status(400).json({ error: 'Missing required fields or invalid data' });
+  }
+
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  if (!fs.existsSync(jobsFile)) return res.status(404).json({ error: 'Jobs file not found' });
+
+  let jobs = JSON.parse(fs.readFileSync(jobsFile));
+  const jobIndex = jobs.findIndex(j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase());
+  if (jobIndex === -1) return res.status(404).json({ error: 'Job not found for this driver' });
+
+  // Update the job with driver response
+  jobs[jobIndex].driverConfirmed = confirmed;
+  jobs[jobIndex].responseAt = new Date();
+
+  fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+
+  // Notify admin via email
+  transporter.sendMail({
+    from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+    to: process.env.EMAIL_TO,
+    subject: `Driver Job Response - ${jobs[jobIndex].bookingData.pickup} → ${jobs[jobIndex].bookingData.dropoff}`,
+    html: `
+      <p>Driver <strong>${driverEmail}</strong> has <strong>${confirmed ? 'CONFIRMED ✅' : 'REFUSED ❌'}</strong> the job.</p>
+      <p><strong>Pickup:</strong> ${jobs[jobIndex].bookingData.pickup}</p>
+      <p><strong>Dropoff:</strong> ${jobs[jobIndex].bookingData.dropoff}</p>
+      <p><strong>Pickup Time:</strong> ${jobs[jobIndex].bookingData.datetime}</p>
+      <p><strong>Vehicle Type:</strong> ${jobs[jobIndex].bookingData.vehicleType}</p>
+      <p><strong>Driver Payout:</strong> $${jobs[jobIndex].driverPay.toFixed(2)}</p>
+      <p><strong>Notes:</strong> ${jobs[jobIndex].bookingData.notes || 'None'}</p>
+    `
+  }).catch(err => console.error('Error sending driver response email:', err));
+
+  res.json({ message: 'Driver response recorded successfully' });
+});
+
 /* ------------------- START SERVER ------------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
