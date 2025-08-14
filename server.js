@@ -209,6 +209,7 @@ app.post('/webhook', (req, res) => {
   if (event.type === 'checkout.session.completed') {
     const s = event.data.object;
     const booking = {
+      id: Date.now().toString(),
       name: s.metadata.name,
       email: s.metadata.email,
       phone: s.metadata.phone,
