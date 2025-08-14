@@ -228,7 +228,7 @@ app.post('/webhook', (req, res) => {
     let allBookings = [];
     if (fs.existsSync(bookingsFile)) allBookings = JSON.parse(fs.readFileSync(bookingsFile));
     allBookings.push(booking);
-        fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
+    fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
 
     // Send internal email
     sendEmail(booking);
@@ -381,12 +381,12 @@ cron.schedule('0 9 * * *', () => {
             to: process.env.EMAIL_TO,
             subject: `${item.type} Renewal Reminder - ${driver.fullName}`,
             text: `${driver.fullName}'s ${item.type} expires in 30 days on ${item.date.toDateString()}.`
-          });
+          }).catch(err => console.error('Renewal email error:', err));
         }
       });
   });
 });
 
+/* ------------------- START SERVER ------------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-                     
