@@ -219,6 +219,7 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
+// Stripe webhook
 app.post('/webhook', (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
@@ -266,14 +267,13 @@ cron.schedule('0 9 * * *', () => {
   });
 });
 
-/* ------------------- NEW DRIVER JOB ASSIGNMENT FEATURE ------------------- */
+/* ------------------- DRIVER JOB ASSIGNMENT FEATURE ------------------- */
 
 function calculateDriverPayout(clientFare) {
   const net = clientFare / 1.45;
   return parseFloat(net.toFixed(2));
 }
 
-// Assign a job to a driver
 app.post('/assign-job', (req, res) => {
   const { driverEmail, bookingData } = req.body;
   if (!driverEmail || !bookingData) return res.status(400).json({ error: 'Missing driverEmail or bookingData' });
@@ -316,37 +316,32 @@ app.post('/assign-job', (req, res) => {
   res.json({ message: 'Job assigned successfully', jobId: newJob.id });
 });
 
-// Driver login route
 app.post('/driver-login', (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
 
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   let jobs = [];
-  if (fs.existsSync(jobsFile)) {
-    jobs = JSON.parse(fs.readFileSync(jobsFile));
-  }
-
+  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
   const driverJobs = jobs.filter(job => job.driverEmail.toLowerCase() === email.toLowerCase());
 
   res.json({ jobs: driverJobs });
 });
 
-/* ------------------- PENDING BOOKINGS ROUTE ADDED ------------------- */
+/* ------------------- PENDING BOOKINGS ROUTE ------------------- */
+
 app.get('/pending-bookings', (req, res) => {
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   let jobs = [];
   if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
 
-  // For admin, consider "pending" as bookings not yet assigned
-  // Here we return all jobs for simplicity; you can filter by some flag if needed
-  const pending = jobs.map(job => job.bookingData);
+  // Only return unassigned jobs (no driverEmail)
+  const pending = jobs.filter(j => !j.driverEmail).map(j => j.bookingData);
   res.json(pending);
 });
 
 /* ------------------- ADMIN PANEL ROUTES ------------------- */
 
-// Get all registered drivers
 app.get('/drivers', (req, res) => {
   const dataPath = path.join(__dirname, 'drivers.json');
   if (!fs.existsSync(dataPath)) return res.json([]);
@@ -354,7 +349,6 @@ app.get('/drivers', (req, res) => {
   res.json(drivers);
 });
 
-// Delete a driver by email
 app.delete('/drivers/:email', (req, res) => {
   const email = req.params.email.toLowerCase();
   const dataPath = path.join(__dirname, 'drivers.json');
@@ -367,7 +361,6 @@ app.delete('/drivers/:email', (req, res) => {
   res.json({ message: `Driver with email ${email} deleted` });
 });
 
-// Get all jobs (assigned to drivers)
 app.get('/jobs', (req, res) => {
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   if (!fs.existsSync(jobsFile)) return res.json([]);
@@ -375,7 +368,6 @@ app.get('/jobs', (req, res) => {
   res.json(jobs);
 });
 
-// Delete a job by ID
 app.delete('/jobs/:id', (req, res) => {
   const jobId = req.params.id;
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
