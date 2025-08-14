@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const bodyParser = require('body-parser');
 const nodemailer = require('nodemailer');
 const path = require('path');
 const multer = require('multer');
@@ -11,18 +12,10 @@ const PDFDocument = require('pdfkit');
 const streamBuffers = require('stream-buffers');
 
 const app = express();
-
-// -------------------- MIDDLEWARE --------------------
 app.use(cors());
 app.use(express.static('public'));
 
-// Parse JSON for all routes EXCEPT /webhook
-app.use((req, res, next) => {
-  if (req.originalUrl === '/webhook') return next();
-  express.json()(req, res, next);
-});
-
-// Multer setup for partner forms
+/* ------------------- MULTER SETUP ------------------- */
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadPath = path.join(__dirname, 'uploads');
@@ -35,7 +28,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Nodemailer setup
+/* ------------------- NODEMAILER ------------------- */
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
@@ -86,10 +79,81 @@ app.post('/partner-form', upload.fields([
   }
 });
 
-/* ------------------- BOOKING EMAIL & PDF ------------------- */
+/* ------------------- STRIPE WEBHOOK ------------------- */
+app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    console.log('Webhook received:', event.type);
+  } catch (err) {
+    console.error('⚠️  Webhook signature verification failed.', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    console.log('✅ Payment completed webhook received');
+
+    const s = event.data.object;
+    const bookingId = Date.now().toString();
+
+    const booking = {
+      id: bookingId,
+      name: s.metadata.name,
+      email: s.metadata.email,
+      phone: s.metadata.phone,
+      pickup: s.metadata.pickup,
+      dropoff: s.metadata.dropoff,
+      datetime: s.metadata.datetime,
+      vehicleType: s.metadata.vehicleType,
+      totalFare: parseFloat(s.metadata.totalFare),
+      distanceKm: s.metadata.distanceKm,
+      durationMin: s.metadata.durationMin,
+      notes: s.metadata.notes,
+      paidAt: new Date()
+    };
+
+    const bookingsFile = path.join(__dirname, 'bookings.json');
+    let allBookings = [];
+    if (fs.existsSync(bookingsFile)) allBookings = JSON.parse(fs.readFileSync(bookingsFile));
+    allBookings.push(booking);
+    fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
+    console.log('✅ Booking saved:', booking.id);
+
+    // Add to driver jobs
+    const jobsFile = path.join(__dirname, 'driver-jobs.json');
+    let jobs = [];
+    if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+
+    const driverPay = calculateDriverPayout(parseFloat(booking.totalFare));
+
+    const newJob = {
+      id: booking.id,
+      driverEmail: '',
+      bookingData: booking,
+      driverPay,
+      assignedAt: new Date()
+    };
+
+    jobs.push(newJob);
+    fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+    console.log('✅ Booking also added to driver-jobs.json:', newJob.id);
+
+    sendEmail(booking).catch(console.error);
+    sendInvoicePDF(booking, s.id).catch(console.error);
+  }
+
+  res.json({ received: true });
+});
+
+/* ------------------- BODY PARSERS ------------------- */
+app.use(bodyParser.json());
+
+/* ------------------- EMAIL & PDF FUNCTIONS ------------------- */
 async function sendEmail(booking) {
   try {
-    const mailOptions = {
+    await transporter.sendMail({
       from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
       to: process.env.EMAIL_TO,
       subject: `New Booking from ${booking.name}`,
@@ -107,11 +171,8 @@ async function sendEmail(booking) {
         <p><strong>Estimated Time:</strong> ${booking.durationMin} min</p>
         <p><strong>Notes:</strong> ${booking.notes || 'None'}</p>
       `
-    };
-    await transporter.sendMail(mailOptions);
-  } catch (error) {
-    console.error('Email sending error:', error);
-  }
+    });
+  } catch (err) { console.error('Email error:', err); }
 }
 
 async function sendInvoicePDF(booking, sessionId) {
@@ -166,11 +227,11 @@ async function sendInvoicePDF(booking, sessionId) {
       });
     });
   } catch (err) {
-    console.error('Invoice PDF sending error:', err);
+    console.error('Invoice PDF error:', err);
   }
 }
 
-/* ------------------- CREATE STRIPE SESSION ------------------- */
+/* ------------------- STRIPE CHECKOUT SESSION ------------------- */
 app.post('/create-checkout-session', async (req, res) => {
   const { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes } = req.body;
   if (!email || !totalFare || totalFare < 10) return res.status(400).json({ error: 'Invalid booking data.' });
@@ -198,65 +259,10 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-/* ------------------- STRIPE WEBHOOK ------------------- */
-app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.error('⚠️  Webhook signature verification failed.', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === 'checkout.session.completed') {
-    const s = event.data.object;
-    const bookingId = Date.now().toString();
-
-    const booking = {
-      id: bookingId,
-      name: s.metadata.name,
-      email: s.metadata.email,
-      phone: s.metadata.phone,
-      pickup: s.metadata.pickup,
-      dropoff: s.metadata.dropoff,
-      datetime: s.metadata.datetime,
-      vehicleType: s.metadata.vehicleType,
-      totalFare: parseFloat(s.metadata.totalFare),
-      distanceKm: s.metadata.distanceKm,
-      durationMin: s.metadata.durationMin,
-      notes: s.metadata.notes,
-      paidAt: new Date()
-    };
-
-    const bookingsFile = path.join(__dirname, 'bookings.json');
-    let allBookings = [];
-    if (fs.existsSync(bookingsFile)) allBookings = JSON.parse(fs.readFileSync(bookingsFile));
-    allBookings.push(booking);
-    fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
-
-    // Add to driver jobs
-    const jobsFile = path.join(__dirname, 'driver-jobs.json');
-    let jobs = [];
-    if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
-
-    const driverPay = calculateDriverPayout(parseFloat(booking.totalFare));
-    const newJob = { id: booking.id, driverEmail: '', bookingData: booking, driverPay, assignedAt: new Date() };
-    jobs.push(newJob);
-    fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
-
-    // Send confirmation emails
-    sendEmail(booking).catch(console.error);
-    sendInvoicePDF(booking, s.id).catch(console.error);
-  }
-
-  res.json({ received: true });
-});
-
-/* ------------------- DRIVER JOB ASSIGNMENT ------------------- */
+/* ------------------- DRIVER JOB LOGIC ------------------- */
 function calculateDriverPayout(clientFare) {
-  return parseFloat((clientFare / 1.45).toFixed(2));
+  const net = clientFare / 1.45;
+  return parseFloat(net.toFixed(2));
 }
 
 app.post('/assign-job', (req, res) => {
@@ -269,7 +275,14 @@ app.post('/assign-job', (req, res) => {
 
   const driverPay = calculateDriverPayout(parseFloat(bookingData.totalFare));
 
-  const newJob = { id: bookingData.id, driverEmail, bookingData, driverPay, assignedAt: new Date() };
+  const newJob = {
+    id: bookingData.id,
+    driverEmail,
+    bookingData,
+    driverPay,
+    assignedAt: new Date()
+  };
+
   jobs.push(newJob);
   fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
 
@@ -292,7 +305,7 @@ app.post('/assign-job', (req, res) => {
   res.json({ message: 'Job assigned successfully', jobId: newJob.id });
 });
 
-/* ------------------- PENDING BOOKINGS ROUTE ------------------- */
+/* ------------------- PENDING BOOKINGS ------------------- */
 app.get('/pending-bookings', (req, res) => {
   const bookingsFile = path.join(__dirname, 'bookings.json');
   let bookings = [];
@@ -302,11 +315,12 @@ app.get('/pending-bookings', (req, res) => {
   let jobs = [];
   if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
   const assignedBookingIds = jobs.map(j => j.bookingData.id.toString());
+
   const pending = bookings.filter(b => !assignedBookingIds.includes(b.id.toString()));
   res.json(pending);
 });
 
-/* ------------------- ADMIN PANEL ROUTES ------------------- */
+/* ------------------- ADMIN PANEL ------------------- */
 app.get('/drivers', (req, res) => {
   const dataPath = path.join(__dirname, 'drivers.json');
   if (!fs.existsSync(dataPath)) return res.json([]);
@@ -320,8 +334,8 @@ app.delete('/drivers/:email', (req, res) => {
   if (!fs.existsSync(dataPath)) return res.status(404).json({ error: 'No drivers found' });
 
   let drivers = JSON.parse(fs.readFileSync(dataPath));
-  const newDrivers = drivers.filter(d => d.email.toLowerCase() !== email);
-  fs.writeFileSync(dataPath, JSON.stringify(newDrivers, null, 2));
+  drivers = drivers.filter(d => d.email.toLowerCase() !== email);
+  fs.writeFileSync(dataPath, JSON.stringify(drivers, null, 2));
   res.json({ message: `Driver with email ${email} deleted` });
 });
 
@@ -338,8 +352,9 @@ app.delete('/jobs/:id', (req, res) => {
   if (!fs.existsSync(jobsFile)) return res.status(404).json({ error: 'No jobs found' });
 
   let jobs = JSON.parse(fs.readFileSync(jobsFile));
-  const newJobs = jobs.filter(j => j.id !== jobId);
-  fs.writeFileSync(jobsFile, JSON.stringify(newJobs, null, 2));
+  jobs = jobs.filter(j => j.id !== jobId);
+  fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+
   res.json({ message: `Job with ID ${jobId} deleted` });
 });
 
@@ -351,6 +366,7 @@ app.post('/driver-login', (req, res) => {
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   let jobs = [];
   if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+
   const driverJobs = jobs.filter(job => job.driverEmail.toLowerCase() === email.toLowerCase());
   res.json({ jobs: driverJobs });
 });
@@ -385,22 +401,20 @@ cron.schedule('0 9 * * *', () => {
 /* ------------------- DRIVER RESPONSE ------------------- */
 app.post('/driver-response', (req, res) => {
   const { driverEmail, jobId, confirmed } = req.body;
-  if (!driverEmail || !jobId || typeof confirmed !== 'boolean') return res.status(400).json({ error: 'Missing required fields or invalid data' });
+  if (!driverEmail || !jobId || typeof confirmed !== 'boolean') 
+    return res.status(400).json({ error: 'Missing required fields or invalid data' });
 
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   if (!fs.existsSync(jobsFile)) return res.status(404).json({ error: 'Jobs file not found' });
 
   let jobs = JSON.parse(fs.readFileSync(jobsFile));
-    const jobIndex = jobs.findIndex(j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase());
+  const jobIndex = jobs.findIndex(j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase());
   if (jobIndex === -1) return res.status(404).json({ error: 'Job not found for this driver' });
 
-  // Update the job with driver response
   jobs[jobIndex].driverConfirmed = confirmed;
   jobs[jobIndex].responseAt = new Date();
-
   fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
 
-  // Notify admin via email
   transporter.sendMail({
     from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
     to: process.env.EMAIL_TO,
@@ -414,7 +428,7 @@ app.post('/driver-response', (req, res) => {
       <p><strong>Driver Payout:</strong> $${jobs[jobIndex].driverPay.toFixed(2)}</p>
       <p><strong>Notes:</strong> ${jobs[jobIndex].bookingData.notes || 'None'}</p>
     `
-  }).catch(err => console.error('Error sending driver response email:', err));
+  }).catch(console.error);
 
   res.json({ message: 'Driver response recorded successfully' });
 });
