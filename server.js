@@ -203,16 +203,18 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    console.log('Webhook received:', event.type);
   } catch (err) {
-    console.error('❌ Webhook signature verification failed:', err.message);
+    console.error('⚠️  Webhook signature verification failed.', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
+  // Handle the checkout session completed event
   if (event.type === 'checkout.session.completed') {
     const s = event.data.object;
-
+    
     const booking = {
-      id: Date.now().toString(),
+      id: Date.now().toString(),  // unique ID for admin & driver assignment
       name: s.metadata.name,
       email: s.metadata.email,
       phone: s.metadata.phone,
@@ -221,33 +223,29 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
       datetime: s.metadata.datetime,
       vehicleType: s.metadata.vehicleType,
       totalFare: parseFloat(s.metadata.totalFare),
-      distanceKm: s.metadata.distanceKm ? parseFloat(s.metadata.distanceKm) : 0,
-      durationMin: s.metadata.durationMin ? parseFloat(s.metadata.durationMin) : 0,
-      notes: s.metadata.notes || '',
-      paidAt: new Date().toISOString()
+      distanceKm: s.metadata.distanceKm,
+      durationMin: s.metadata.durationMin,
+      notes: s.metadata.notes,
+      paidAt: new Date()
     };
 
     const bookingsFile = path.join(__dirname, 'bookings.json');
+    let allBookings = [];
 
     try {
-      let allBookings = [];
       if (fs.existsSync(bookingsFile)) {
-        const content = fs.readFileSync(bookingsFile, 'utf-8');
-        allBookings = content ? JSON.parse(content) : [];
+        allBookings = JSON.parse(fs.readFileSync(bookingsFile));
       }
-
       allBookings.push(booking);
       fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
       console.log('✅ Booking saved:', booking.id);
     } catch (err) {
-      console.error('❌ Error saving booking:', err);
+      console.error('Error saving booking:', err);
     }
 
-    // Send internal email to admin
-    sendEmail(booking);
-
-    // Send invoice PDF to client
-    sendInvoicePDF(booking, s.id);
+    // Send confirmation emails
+    sendEmail(booking).catch(err => console.error('Error sending internal email:', err));
+    sendInvoicePDF(booking, s.id).catch(err => console.error('Error sending PDF invoice:', err));
   }
 
   res.json({ received: true });
