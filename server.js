@@ -16,7 +16,7 @@ const app = express();
 app.use(cors());
 app.use(express.static('public'));
 
-// Multer setup
+// Multer setup for partner forms
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadPath = path.join(__dirname, 'uploads');
@@ -35,7 +35,7 @@ const transporter = nodemailer.createTransport({
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
-// Partner form route
+/* ------------------- PARTNER FORM ROUTE ------------------- */
 app.post('/partner-form', upload.fields([
   { name: 'insuranceFile', maxCount: 1 },
   { name: 'regoFile', maxCount: 1 },
@@ -80,11 +80,11 @@ app.post('/partner-form', upload.fields([
   }
 });
 
-// Body parsers AFTER multipart routes
+// Body parsers
 app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(bodyParser.json());
 
-// Booking email function
+/* ------------------- BOOKING EMAIL & PDF ------------------- */
 async function sendEmail(booking) {
   try {
     const mailOptions = {
@@ -112,66 +112,45 @@ async function sendEmail(booking) {
   }
 }
 
-// Generate PDF Invoice and email client
 async function sendInvoicePDF(booking, sessionId) {
   try {
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
     const bufferStream = new streamBuffers.WritableStreamBuffer();
     doc.pipe(bufferStream);
 
-    doc
-      .fontSize(20)
-      .fillColor('#B9975B')
-      .text('CHAUFFEUR DE LUXE', { align: 'center' });
-    doc
-      .fontSize(12)
-      .fillColor('black')
-      .text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
+    doc.fontSize(20).fillColor('#B9975B').text('CHAUFFEUR DE LUXE', { align: 'center' });
+    doc.fontSize(12).fillColor('black').text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(18).fillColor('black').text('Invoice', { align: 'center' });
     doc.moveDown();
 
-    doc
-      .fontSize(18)
-      .fillColor('black')
-      .text('Invoice', { align: 'center' });
-    doc.moveDown();
-
-    doc
-      .fontSize(12)
+    doc.fontSize(12)
       .text('Business Name: Chauffeur de Luxe')
       .text('ABN: ______________________ (to be filled)')
       .moveDown();
 
-    doc
-      .fontSize(12)
-      .text(`Invoice Number: ${sessionId}`)
+    doc.text(`Invoice Number: ${sessionId}`)
       .text(`Date: ${new Date().toLocaleDateString()}`)
       .moveDown();
 
-    doc
-      .fontSize(12)
-      .text(`Billed To:`)
+    doc.text('Billed To:')
       .text(`Name: ${booking.name}`)
       .text(`Email: ${booking.email}`)
       .text(`Phone: ${booking.phone}`)
       .moveDown();
 
-    doc
-      .text(`Pickup: ${booking.pickup}`)
+    doc.text(`Pickup: ${booking.pickup}`)
       .text(`Dropoff: ${booking.dropoff}`)
       .text(`Pickup Time: ${booking.datetime}`)
       .text(`Vehicle Type: ${booking.vehicleType}`)
       .moveDown();
 
-    doc
-      .text(`Distance: ${booking.distanceKm} km`)
+    doc.text(`Distance: ${booking.distanceKm} km`)
       .text(`Estimated Duration: ${booking.durationMin} min`)
       .text(`Notes: ${booking.notes || 'None'}`)
       .moveDown();
 
-    doc
-      .fontSize(14)
-      .text(`Total Fare: $${booking.totalFare}`, { align: 'right' });
-
+    doc.fontSize(14).text(`Total Fare: $${booking.totalFare}`, { align: 'right' });
     doc.end();
 
     bufferStream.on('finish', async () => {
@@ -181,9 +160,7 @@ async function sendInvoicePDF(booking, sessionId) {
         to: booking.email,
         subject: 'Your Chauffeur de Luxe Invoice',
         text: 'Please find your invoice attached.',
-        attachments: [
-          { filename: 'invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }
-        ]
+        attachments: [{ filename: 'invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
       });
     });
   } catch (err) {
@@ -191,7 +168,7 @@ async function sendInvoicePDF(booking, sessionId) {
   }
 }
 
-// Booking routes
+/* ------------------- CREATE STRIPE SESSION ------------------- */
 app.post('/create-checkout-session', async (req, res) => {
   const { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes } = req.body;
   if (!email || !totalFare || totalFare < 10) return res.status(400).json({ error: 'Invalid booking data.' });
@@ -219,7 +196,7 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// Stripe webhook
+/* ------------------- STRIPE WEBHOOK ------------------- */
 app.post('/webhook', (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
@@ -228,47 +205,42 @@ app.post('/webhook', (req, res) => {
   } catch (err) {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
+
   if (event.type === 'checkout.session.completed') {
     const s = event.data.object;
-    sendEmail({
-      name: s.metadata.name, email: s.metadata.email, phone: s.metadata.phone, pickup: s.metadata.pickup, dropoff: s.metadata.dropoff, datetime: s.metadata.datetime, vehicleType: s.metadata.vehicleType, totalFare: s.metadata.totalFare, distanceKm: s.metadata.distanceKm, durationMin: s.metadata.durationMin, notes: s.metadata.notes
-    });
-    sendInvoicePDF({
-      name: s.metadata.name, email: s.metadata.email, phone: s.metadata.phone, pickup: s.metadata.pickup, dropoff: s.metadata.dropoff, datetime: s.metadata.datetime, vehicleType: s.metadata.vehicleType, totalFare: s.metadata.totalFare, distanceKm: s.metadata.distanceKm, durationMin: s.metadata.durationMin, notes: s.metadata.notes
-    }, s.id);
+    const booking = {
+      name: s.metadata.name,
+      email: s.metadata.email,
+      phone: s.metadata.phone,
+      pickup: s.metadata.pickup,
+      dropoff: s.metadata.dropoff,
+      datetime: s.metadata.datetime,
+      vehicleType: s.metadata.vehicleType,
+      totalFare: s.metadata.totalFare,
+      distanceKm: s.metadata.distanceKm,
+      durationMin: s.metadata.durationMin,
+      notes: s.metadata.notes,
+      paidAt: new Date()
+    };
+
+    // Save booking for admin
+    const bookingsFile = path.join(__dirname, 'bookings.json');
+    let allBookings = [];
+    if (fs.existsSync(bookingsFile)) allBookings = JSON.parse(fs.readFileSync(bookingsFile));
+    allBookings.push(booking);
+        fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
+
+    // Send internal email
+    sendEmail(booking);
+
+    // Send invoice PDF to client
+    sendInvoicePDF(booking, s.id);
   }
+
   res.json({ received: true });
 });
 
-// Renewal reminder
-cron.schedule('0 9 * * *', () => {
-  const dataPath = path.join(__dirname, 'drivers.json');
-  if (!fs.existsSync(dataPath)) return;
-
-  const drivers = JSON.parse(fs.readFileSync(dataPath));
-  const today = new Date();
-
-  drivers.forEach(driver => {
-    const regoDate = new Date(driver.regoExpiry);
-    const insuranceDate = new Date(driver.insuranceExpiry);
-
-    [{ type: 'Registration', date: regoDate }, { type: 'Insurance', date: insuranceDate }]
-      .forEach(item => {
-        const diffDays = Math.ceil((item.date - today) / (1000 * 60 * 60 * 24));
-        if (diffDays === 30) {
-          transporter.sendMail({
-            from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-            to: process.env.EMAIL_TO,
-            subject: `${item.type} Renewal Reminder - ${driver.fullName}`,
-            text: `${driver.fullName}'s ${item.type} expires in 30 days on ${item.date.toDateString()}.`
-          });
-        }
-      });
-  });
-});
-
-/* ------------------- DRIVER JOB ASSIGNMENT FEATURE ------------------- */
-
+/* ------------------- DRIVER JOB ASSIGNMENT ------------------- */
 function calculateDriverPayout(clientFare) {
   const net = clientFare / 1.45;
   return parseFloat(net.toFixed(2));
@@ -280,9 +252,7 @@ app.post('/assign-job', (req, res) => {
 
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   let jobs = [];
-  if (fs.existsSync(jobsFile)) {
-    jobs = JSON.parse(fs.readFileSync(jobsFile));
-  }
+  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
 
   const driverPay = calculateDriverPayout(parseFloat(bookingData.totalFare));
 
@@ -316,32 +286,29 @@ app.post('/assign-job', (req, res) => {
   res.json({ message: 'Job assigned successfully', jobId: newJob.id });
 });
 
-app.post('/driver-login', (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email required' });
-
-  const jobsFile = path.join(__dirname, 'driver-jobs.json');
-  let jobs = [];
-  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
-  const driverJobs = jobs.filter(job => job.driverEmail.toLowerCase() === email.toLowerCase());
-
-  res.json({ jobs: driverJobs });
-});
-
 /* ------------------- PENDING BOOKINGS ROUTE ------------------- */
-
 app.get('/pending-bookings', (req, res) => {
+  const bookingsFile = path.join(__dirname, 'bookings.json');
+  let bookings = [];
+  if (fs.existsSync(bookingsFile)) bookings = JSON.parse(fs.readFileSync(bookingsFile));
+
+  // Only return unassigned bookings (no driverEmail assigned in driver-jobs.json)
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   let jobs = [];
   if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+  const assignedBookings = jobs.map(j => j.bookingData);
 
-  // Only return unassigned jobs (no driverEmail)
-  const pending = jobs.filter(j => !j.driverEmail).map(j => j.bookingData);
+  const pending = bookings.filter(b => !assignedBookings.some(ab =>
+    ab.pickup === b.pickup &&
+    ab.dropoff === b.dropoff &&
+    ab.datetime === b.datetime &&
+    ab.email === b.email
+  ));
+
   res.json(pending);
 });
 
 /* ------------------- ADMIN PANEL ROUTES ------------------- */
-
 app.get('/drivers', (req, res) => {
   const dataPath = path.join(__dirname, 'drivers.json');
   if (!fs.existsSync(dataPath)) return res.json([]);
@@ -380,7 +347,46 @@ app.delete('/jobs/:id', (req, res) => {
   res.json({ message: `Job with ID ${jobId} deleted` });
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+/* ------------------- DRIVER LOGIN ------------------- */
+app.post('/driver-login', (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email required' });
+
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  let jobs = [];
+  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+  const driverJobs = jobs.filter(job => job.driverEmail.toLowerCase() === email.toLowerCase());
+
+  res.json({ jobs: driverJobs });
 });
+
+/* ------------------- RENEWAL REMINDERS ------------------- */
+cron.schedule('0 9 * * *', () => {
+  const dataPath = path.join(__dirname, 'drivers.json');
+  if (!fs.existsSync(dataPath)) return;
+
+  const drivers = JSON.parse(fs.readFileSync(dataPath));
+  const today = new Date();
+
+  drivers.forEach(driver => {
+    const regoDate = new Date(driver.regoExpiry);
+    const insuranceDate = new Date(driver.insuranceExpiry);
+
+    [{ type: 'Registration', date: regoDate }, { type: 'Insurance', date: insuranceDate }]
+      .forEach(item => {
+        const diffDays = Math.ceil((item.date - today) / (1000 * 60 * 60 * 24));
+        if (diffDays === 30) {
+          transporter.sendMail({
+            from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+            to: process.env.EMAIL_TO,
+            subject: `${item.type} Renewal Reminder - ${driver.fullName}`,
+            text: `${driver.fullName}'s ${item.type} expires in 30 days on ${item.date.toDateString()}.`
+          });
+        }
+      });
+  });
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+                     
