@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-const bodyParser = require('body-parser');
 const nodemailer = require('nodemailer');
 const path = require('path');
 const multer = require('multer');
@@ -13,8 +12,15 @@ const streamBuffers = require('stream-buffers');
 
 const app = express();
 
+// -------------------- MIDDLEWARE --------------------
 app.use(cors());
 app.use(express.static('public'));
+
+// Parse JSON for all routes EXCEPT /webhook
+app.use((req, res, next) => {
+  if (req.originalUrl === '/webhook') return next();
+  express.json()(req, res, next);
+});
 
 // Multer setup for partner forms
 const storage = multer.diskStorage({
@@ -79,9 +85,6 @@ app.post('/partner-form', upload.fields([
     res.status(500).json({ error: 'Server error' });
   }
 });
-
-// Body parsers
-app.use(bodyParser.json());
 
 /* ------------------- BOOKING EMAIL & PDF ------------------- */
 async function sendEmail(booking) {
@@ -202,20 +205,16 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-    console.log('Webhook received:', event.type);
   } catch (err) {
     console.error('⚠️  Webhook signature verification failed.', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // Handle the checkout session completed event
   if (event.type === 'checkout.session.completed') {
     const s = event.data.object;
-    
-     // Use a single timestamp ID for both booking and job to fix pending jobs [ ] issue
-     const bookingId = Date.now().toString();
+    const bookingId = Date.now().toString();
 
-      const booking = {
+    const booking = {
       id: bookingId,
       name: s.metadata.name,
       email: s.metadata.email,
@@ -233,41 +232,23 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
     const bookingsFile = path.join(__dirname, 'bookings.json');
     let allBookings = [];
+    if (fs.existsSync(bookingsFile)) allBookings = JSON.parse(fs.readFileSync(bookingsFile));
+    allBookings.push(booking);
+    fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
 
-    try {
-      if (fs.existsSync(bookingsFile)) {
-        allBookings = JSON.parse(fs.readFileSync(bookingsFile));
-      }
-      allBookings.push(booking);
-      fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
-      console.log('✅ Booking saved:', booking.id);
+    // Add to driver jobs
+    const jobsFile = path.join(__dirname, 'driver-jobs.json');
+    let jobs = [];
+    if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
 
-// --- ALSO ADD TO DRIVER JOBS ---
-const jobsFile = path.join(__dirname, 'driver-jobs.json');
-let jobs = [];
-if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
-
-const driverPay = calculateDriverPayout(parseFloat(booking.totalFare));
-
-const newJob = {
-  id: booking.id,
-  driverEmail: '', // admin can assign later
-  bookingData: booking,
-  driverPay,
-  assignedAt: new Date()
-};
-
-jobs.push(newJob);
-fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
-console.log('✅ Booking also added to driver-jobs.json:', newJob.id);
-      
-    } catch (err) {
-      console.error('Error saving booking:', err);
-    }
+    const driverPay = calculateDriverPayout(parseFloat(booking.totalFare));
+    const newJob = { id: booking.id, driverEmail: '', bookingData: booking, driverPay, assignedAt: new Date() };
+    jobs.push(newJob);
+    fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
 
     // Send confirmation emails
-    sendEmail(booking).catch(err => console.error('Error sending internal email:', err));
-    sendInvoicePDF(booking, s.id).catch(err => console.error('Error sending PDF invoice:', err));
+    sendEmail(booking).catch(console.error);
+    sendInvoicePDF(booking, s.id).catch(console.error);
   }
 
   res.json({ received: true });
@@ -275,8 +256,7 @@ console.log('✅ Booking also added to driver-jobs.json:', newJob.id);
 
 /* ------------------- DRIVER JOB ASSIGNMENT ------------------- */
 function calculateDriverPayout(clientFare) {
-  const net = clientFare / 1.45;
-  return parseFloat(net.toFixed(2));
+  return parseFloat((clientFare / 1.45).toFixed(2));
 }
 
 app.post('/assign-job', (req, res) => {
@@ -289,14 +269,7 @@ app.post('/assign-job', (req, res) => {
 
   const driverPay = calculateDriverPayout(parseFloat(bookingData.totalFare));
 
-  const newJob = {
-    id: bookingData.id,
-    driverEmail,
-    bookingData,
-    driverPay,
-    assignedAt: new Date()
-  };
-
+  const newJob = { id: bookingData.id, driverEmail, bookingData, driverPay, assignedAt: new Date() };
   jobs.push(newJob);
   fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
 
@@ -314,7 +287,7 @@ app.post('/assign-job', (req, res) => {
       <p><strong>Notes:</strong> ${bookingData.notes || 'None'}</p>
       <p>Please login to your driver dashboard to view full details.</p>
     `
-  }).catch(err => console.error('Error sending job email to driver:', err));
+  }).catch(console.error);
 
   res.json({ message: 'Job assigned successfully', jobId: newJob.id });
 });
@@ -325,12 +298,11 @@ app.get('/pending-bookings', (req, res) => {
   let bookings = [];
   if (fs.existsSync(bookingsFile)) bookings = JSON.parse(fs.readFileSync(bookingsFile));
 
-  // Only return unassigned bookings (match by ID)
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   let jobs = [];
   if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
   const assignedBookingIds = jobs.map(j => j.bookingData.id.toString());
-const pending = bookings.filter(b => !assignedBookingIds.includes(b.id.toString()));
+  const pending = bookings.filter(b => !assignedBookingIds.includes(b.id.toString()));
   res.json(pending);
 });
 
@@ -350,7 +322,6 @@ app.delete('/drivers/:email', (req, res) => {
   let drivers = JSON.parse(fs.readFileSync(dataPath));
   const newDrivers = drivers.filter(d => d.email.toLowerCase() !== email);
   fs.writeFileSync(dataPath, JSON.stringify(newDrivers, null, 2));
-
   res.json({ message: `Driver with email ${email} deleted` });
 });
 
@@ -369,7 +340,6 @@ app.delete('/jobs/:id', (req, res) => {
   let jobs = JSON.parse(fs.readFileSync(jobsFile));
   const newJobs = jobs.filter(j => j.id !== jobId);
   fs.writeFileSync(jobsFile, JSON.stringify(newJobs, null, 2));
-
   res.json({ message: `Job with ID ${jobId} deleted` });
 });
 
@@ -382,7 +352,6 @@ app.post('/driver-login', (req, res) => {
   let jobs = [];
   if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
   const driverJobs = jobs.filter(job => job.driverEmail.toLowerCase() === email.toLowerCase());
-
   res.json({ jobs: driverJobs });
 });
 
@@ -407,7 +376,7 @@ cron.schedule('0 9 * * *', () => {
             to: process.env.EMAIL_TO,
             subject: `${item.type} Renewal Reminder - ${driver.fullName}`,
             text: `${driver.fullName}'s ${item.type} expires in 30 days on ${item.date.toDateString()}.`
-          }).catch(err => console.error('Renewal email error:', err));
+          }).catch(console.error);
         }
       });
   });
@@ -416,15 +385,13 @@ cron.schedule('0 9 * * *', () => {
 /* ------------------- DRIVER RESPONSE ------------------- */
 app.post('/driver-response', (req, res) => {
   const { driverEmail, jobId, confirmed } = req.body;
-  if (!driverEmail || !jobId || typeof confirmed !== 'boolean') {
-    return res.status(400).json({ error: 'Missing required fields or invalid data' });
-  }
+  if (!driverEmail || !jobId || typeof confirmed !== 'boolean') return res.status(400).json({ error: 'Missing required fields or invalid data' });
 
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   if (!fs.existsSync(jobsFile)) return res.status(404).json({ error: 'Jobs file not found' });
 
   let jobs = JSON.parse(fs.readFileSync(jobsFile));
-  const jobIndex = jobs.findIndex(j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase());
+    const jobIndex = jobs.findIndex(j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase());
   if (jobIndex === -1) return res.status(404).json({ error: 'Job not found for this driver' });
 
   // Update the job with driver response
