@@ -330,10 +330,8 @@ app.get('/pending-bookings', (req, res) => {
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   let jobs = [];
   if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
-  const assignedBookingIds = jobs.map(j => j.bookingData.id);
-
-  const pending = bookings.filter(b => !assignedBookingIds.includes(b.id));
-
+  const assignedBookingIds = jobs.map(j => j.bookingData.id.toString());
+const pending = bookings.filter(b => !assignedBookingIds.includes(b.id.toString()));
   res.json(pending);
 });
 
