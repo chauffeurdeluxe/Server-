@@ -344,6 +344,50 @@ app.get('/pending-bookings', (req, res) => {
   res.json(pending);
 });
 
+/* ------------------- ADMIN PANEL ROUTES ------------------- */
+
+// Get all registered drivers
+app.get('/drivers', (req, res) => {
+  const dataPath = path.join(__dirname, 'drivers.json');
+  if (!fs.existsSync(dataPath)) return res.json([]);
+  const drivers = JSON.parse(fs.readFileSync(dataPath));
+  res.json(drivers);
+});
+
+// Delete a driver by email
+app.delete('/drivers/:email', (req, res) => {
+  const email = req.params.email.toLowerCase();
+  const dataPath = path.join(__dirname, 'drivers.json');
+  if (!fs.existsSync(dataPath)) return res.status(404).json({ error: 'No drivers found' });
+
+  let drivers = JSON.parse(fs.readFileSync(dataPath));
+  const newDrivers = drivers.filter(d => d.email.toLowerCase() !== email);
+  fs.writeFileSync(dataPath, JSON.stringify(newDrivers, null, 2));
+
+  res.json({ message: `Driver with email ${email} deleted` });
+});
+
+// Get all jobs (assigned to drivers)
+app.get('/jobs', (req, res) => {
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  if (!fs.existsSync(jobsFile)) return res.json([]);
+  const jobs = JSON.parse(fs.readFileSync(jobsFile));
+  res.json(jobs);
+});
+
+// Delete a job by ID
+app.delete('/jobs/:id', (req, res) => {
+  const jobId = req.params.id;
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  if (!fs.existsSync(jobsFile)) return res.status(404).json({ error: 'No jobs found' });
+
+  let jobs = JSON.parse(fs.readFileSync(jobsFile));
+  const newJobs = jobs.filter(j => j.id !== jobId);
+  fs.writeFileSync(jobsFile, JSON.stringify(newJobs, null, 2));
+
+  res.json({ message: `Job with ID ${jobId} deleted` });
+});
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
