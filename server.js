@@ -305,7 +305,7 @@ app.post('/assign-job', (req, res) => {
   res.json({ message: 'Job assigned successfully', jobId: newJob.id });
 });
 
-/* ------------------- PENDING BOOKINGS ------------------- */
+/* ------------------- PENDING BOOKINGS ROUTE ------------------- */
 app.get('/pending-bookings', (req, res) => {
   const bookingsFile = path.join(__dirname, 'bookings.json');
   let bookings = [];
@@ -314,7 +314,11 @@ app.get('/pending-bookings', (req, res) => {
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   let jobs = [];
   if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
-  const assignedBookingIds = jobs.map(j => j.bookingData.id.toString());
+
+  // Only consider jobs with a driver assigned as “assigned”
+  const assignedBookingIds = jobs
+    .filter(j => j.driverEmail && j.driverEmail.trim() !== '')
+    .map(j => j.bookingData.id.toString());
 
   const pending = bookings.filter(b => !assignedBookingIds.includes(b.id.toString()));
   res.json(pending);
