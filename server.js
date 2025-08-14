@@ -213,8 +213,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   if (event.type === 'checkout.session.completed') {
     const s = event.data.object;
     
-    const booking = {
-      id: Date.now().toString(),  // unique ID for admin & driver assignment
+     // Use a single timestamp ID for both booking and job to fix pending jobs [ ] issue
+     const bookingId = Date.now().toString();
+
+      const booking = {
+      id: bookingId,
       name: s.metadata.name,
       email: s.metadata.email,
       phone: s.metadata.phone,
@@ -248,7 +251,7 @@ if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
 const driverPay = calculateDriverPayout(parseFloat(booking.totalFare));
 
 const newJob = {
-  id: Date.now().toString(),
+  id: booking.id,
   driverEmail: '', // admin can assign later
   bookingData: booking,
   driverPay,
@@ -288,7 +291,7 @@ app.post('/assign-job', (req, res) => {
   const driverPay = calculateDriverPayout(parseFloat(bookingData.totalFare));
 
   const newJob = {
-    id: Date.now().toString(),
+    id: bookingData.id,
     driverEmail,
     bookingData,
     driverPay,
