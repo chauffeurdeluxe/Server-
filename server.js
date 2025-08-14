@@ -209,7 +209,7 @@ app.post('/webhook', (req, res) => {
   if (event.type === 'checkout.session.completed') {
     const s = event.data.object;
     const booking = {
-      id: Date.now().toString(),
+      id: Date.now().toString(), // <-- added unique ID
       name: s.metadata.name,
       email: s.metadata.email,
       phone: s.metadata.phone,
@@ -293,18 +293,13 @@ app.get('/pending-bookings', (req, res) => {
   let bookings = [];
   if (fs.existsSync(bookingsFile)) bookings = JSON.parse(fs.readFileSync(bookingsFile));
 
-  // Only return unassigned bookings (no driverEmail assigned in driver-jobs.json)
+  // Only return unassigned bookings (match by ID)
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   let jobs = [];
   if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
-  const assignedBookings = jobs.map(j => j.bookingData);
+  const assignedBookingIds = jobs.map(j => j.bookingData.id);
 
-  const pending = bookings.filter(b => !assignedBookings.some(ab =>
-    ab.pickup === b.pickup &&
-    ab.dropoff === b.dropoff &&
-    ab.datetime === b.datetime &&
-    ab.email === b.email
-  ));
+  const pending = bookings.filter(b => !assignedBookingIds.includes(b.id));
 
   res.json(pending);
 });
