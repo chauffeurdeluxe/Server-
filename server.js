@@ -239,6 +239,26 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
       allBookings.push(booking);
       fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
       console.log('✅ Booking saved:', booking.id);
+
+// --- ALSO ADD TO DRIVER JOBS ---
+const jobsFile = path.join(__dirname, 'driver-jobs.json');
+let jobs = [];
+if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+
+const driverPay = calculateDriverPayout(parseFloat(booking.totalFare));
+
+const newJob = {
+  id: Date.now().toString(),
+  driverEmail: '', // admin can assign later
+  bookingData: booking,
+  driverPay,
+  assignedAt: new Date()
+};
+
+jobs.push(newJob);
+fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+console.log('✅ Booking also added to driver-jobs.json:', newJob.id);
+      
     } catch (err) {
       console.error('Error saving booking:', err);
     }
