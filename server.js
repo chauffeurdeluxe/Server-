@@ -402,7 +402,7 @@ cron.schedule('0 9 * * *', () => {
   });
 });
 
-/* ------------------- DRIVER RESPONSE ------------------- */
+/* ------------------- DRIVER RESPONSE ------------------- *
 app.post('/driver-response', (req, res) => {
   const { driverEmail, jobId, confirmed } = req.body;
   if (!driverEmail || !jobId || typeof confirmed !== 'boolean') 
@@ -415,26 +415,59 @@ app.post('/driver-response', (req, res) => {
   const jobIndex = jobs.findIndex(j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase());
   if (jobIndex === -1) return res.status(404).json({ error: 'Job not found for this driver' });
 
-  jobs[jobIndex].driverConfirmed = confirmed;
-  jobs[jobIndex].responseAt = new Date();
+  if (confirmed) {
+    // CONFIRMED: just mark it
+    jobs[jobIndex].driverConfirmed = true;
+    jobs[jobIndex].responseAt = new Date();
+  } else {
+    // REFUSED: remove job from driver-jobs.json so it can be reassigned
+    jobs.splice(jobIndex, 1);
+  }
+
   fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
 
   transporter.sendMail({
     from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
     to: process.env.EMAIL_TO,
-    subject: `Driver Job Response - ${jobs[jobIndex].bookingData.pickup} → ${jobs[jobIndex].bookingData.dropoff}`,
+    subject: `Driver Job Response - ${confirmed ? 'CONFIRMED' : 'REFUSED'} - ${jobId}`,
     html: `
       <p>Driver <strong>${driverEmail}</strong> has <strong>${confirmed ? 'CONFIRMED ✅' : 'REFUSED ❌'}</strong> the job.</p>
-      <p><strong>Pickup:</strong> ${jobs[jobIndex].bookingData.pickup}</p>
-      <p><strong>Dropoff:</strong> ${jobs[jobIndex].bookingData.dropoff}</p>
-      <p><strong>Pickup Time:</strong> ${jobs[jobIndex].bookingData.datetime}</p>
-      <p><strong>Vehicle Type:</strong> ${jobs[jobIndex].bookingData.vehicleType}</p>
-      <p><strong>Driver Payout:</strong> $${jobs[jobIndex].driverPay.toFixed(2)}</p>
-      <p><strong>Notes:</strong> ${jobs[jobIndex].bookingData.notes || 'None'}</p>
+      <p><strong>Pickup:</strong> ${jobs[jobIndex]?.bookingData?.pickup || 'N/A'}</p>
+      <p><strong>Dropoff:</strong> ${jobs[jobIndex]?.bookingData?.dropoff || 'N/A'}</p>
+      <p><strong>Pickup Time:</strong> ${jobs[jobIndex]?.bookingData?.datetime || 'N/A'}</p>
+      <p><strong>Vehicle Type:</strong> ${jobs[jobIndex]?.bookingData?.vehicleType || 'N/A'}</p>
+      <p><strong>Driver Payout:</strong> $${jobs[jobIndex]?.driverPay?.toFixed(2) || 'N/A'}</p>
+      <p><strong>Notes:</strong> ${jobs[jobIndex]?.bookingData?.notes || 'None'}</p>
     `
   }).catch(console.error);
 
   res.json({ message: 'Driver response recorded successfully' });
+});
+
+app.post('/driver-complete', (req, res) => {
+  const { driverEmail, jobId } = req.body;
+  if (!driverEmail || !jobId) return res.status(400).json({ error: 'Missing required fields' });
+
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  if (!fs.existsSync(jobsFile)) return res.status(404).json({ error: 'Jobs file not found' });
+
+  let jobs = JSON.parse(fs.readFileSync(jobsFile));
+  const jobIndex = jobs.findIndex(j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase());
+  if (jobIndex === -1) return res.status(404).json({ error: 'Job not found for this driver' });
+
+  jobs[jobIndex].completed = true;
+  jobs[jobIndex].completedAt = new Date();
+
+  fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+
+  transporter.sendMail({
+    from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+    to: process.env.EMAIL_TO,
+    subject: `Driver Job Completed - ${jobId}`,
+    html: `<p>Driver <strong>${driverEmail}</strong> has completed the job <strong>${jobId}</strong>.</p>`
+  }).catch(console.error);
+
+  res.json({ message: 'Job marked as completed successfully' });
 });
 
 /* ------------------- START SERVER ------------------- */
