@@ -81,7 +81,6 @@ app.post('/partner-form', upload.fields([
 });
 
 // Body parsers
-app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(bodyParser.json());
 
 /* ------------------- BOOKING EMAIL & PDF ------------------- */
