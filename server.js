@@ -292,6 +292,9 @@ app.post('/assign-job', (req, res) => {
     subject: `New Chauffeur Job Assigned`,
     html: `
       <h2>You have a new job assigned</h2>
+      <p><strong>Name:</strong> ${bookingData.name}</p>
+      <p><strong>Email:</strong> ${bookingData.email}</p>
+      <p><strong>Phone:</strong> ${bookingData.phone}</p>
       <p><strong>Pickup:</strong> ${bookingData.pickup}</p>
       <p><strong>Dropoff:</strong> ${bookingData.dropoff}</p>
       <p><strong>Pickup Time:</strong> ${bookingData.datetime}</p>
@@ -435,6 +438,9 @@ app.post('/driver-response', (req, res) => {
     subject: `Driver Job Response - ${confirmed ? 'CONFIRMED' : 'REFUSED'} - ${jobId}`,
     html: `
       <p>Driver <strong>${driverEmail}</strong> has <strong>${confirmed ? 'CONFIRMED ✅' : 'REFUSED ❌'}</strong> the job.</p>
+      <p><strong>Name:</strong> ${jobData.bookingData.name}</p>
+      <p><strong>Email:</strong> ${jobData.bookingData.email}</p>
+      <p><strong>Phone:</strong> ${jobData.bookingData.phone}</p>
       <p><strong>Pickup:</strong> ${jobData.bookingData.pickup}</p>
       <p><strong>Dropoff:</strong> ${jobData.bookingData.dropoff}</p>
       <p><strong>Pickup Time:</strong> ${jobData.bookingData.datetime}</p>
@@ -475,6 +481,9 @@ app.post('/driver-complete', (req, res) => {
     subject: `Driver Job Completed - ${jobId}`,
     html: `
       <p>Driver <strong>${driverEmail}</strong> has <strong>COMPLETED ✅</strong> the job <strong>${jobId}</strong>.</p>
+      <p><strong>Name:</strong> ${jobData.bookingData.name}</p>
+      <p><strong>Email:</strong> ${jobData.bookingData.email}</p>
+      <p><strong>Phone:</strong> ${jobData.bookingData.phone}</p>
       <p><strong>Pickup:</strong> ${jobData.bookingData.pickup}</p>
       <p><strong>Dropoff:</strong> ${jobData.bookingData.dropoff}</p>
       <p><strong>Pickup Time:</strong> ${jobData.bookingData.datetime}</p>
