@@ -328,12 +328,23 @@ app.get('/pending-bookings', (req, res) => {
   let jobs = [];
   if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
 
-  // Only consider jobs with a driver assigned as “assigned”
+  const completedFile = path.join(__dirname, 'completed-jobs.json');
+  let completed = [];
+  if (fs.existsSync(completedFile)) completed = JSON.parse(fs.readFileSync(completedFile));
+
+  // IDs of assigned jobs
   const assignedBookingIds = jobs
     .filter(j => j.driverEmail && j.driverEmail.trim() !== '')
     .map(j => j.bookingData.id.toString());
 
-  const pending = bookings.filter(b => !assignedBookingIds.includes(b.id.toString()));
+  // IDs of completed jobs
+  const completedBookingIds = completed.map(c => c.id.toString());
+
+  // Pending = not assigned AND not completed
+  const pending = bookings.filter(
+    b => !assignedBookingIds.includes(b.id.toString()) && !completedBookingIds.includes(b.id.toString())
+  );
+
   res.json(pending);
 });
 
