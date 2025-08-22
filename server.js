@@ -348,6 +348,14 @@ app.get('/pending-bookings', (req, res) => {
   res.json(pending);
 });
 
+// ------------------- COMPLETED JOBS ROUTE -------------------
+app.get('/completed-jobs', (req, res) => {
+  const completedFile = path.join(__dirname, 'completed-jobs.json');
+  if (!fs.existsSync(completedFile)) return res.json([]);
+  const completedJobs = JSON.parse(fs.readFileSync(completedFile));
+  res.json(completedJobs);
+});
+
 /* ------------------- ADMIN PANEL ------------------- */
 app.get('/drivers', (req, res) => {
   const dataPath = path.join(__dirname, 'drivers.json');
