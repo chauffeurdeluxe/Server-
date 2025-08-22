@@ -15,6 +15,16 @@ const app = express();
 app.use(cors());
 app.use(express.static('public'));
 
+function saveCompletedJob(job) {
+  const completedFile = path.join(__dirname, 'completed-jobs.json');
+  let completed = [];
+  if (fs.existsSync(completedFile)) {
+    completed = JSON.parse(fs.readFileSync(completedFile));
+  }
+  completed.push(job);
+  fs.writeFileSync(completedFile, JSON.stringify(completed, null, 2));
+}
+
 /* ------------------- MULTER SETUP ------------------- */
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -467,12 +477,16 @@ app.post('/driver-complete', (req, res) => {
 
   const jobData = jobs[jobIndex]; // Save job data for email
 
-  // Mark as completed and remove from driver jobs
-  jobData.completed = true;
-  jobData.completedAt = new Date();
-  jobs.splice(jobIndex, 1); // remove from active driver jobs
+// Mark as completed
+jobData.completed = true;
+jobData.completedAt = new Date();
 
-  fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+// Remove from active driver jobs
+jobs.splice(jobIndex, 1);
+fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+
+// Save to completed-jobs.json
+saveCompletedJob(jobData);
 
   // Send admin email
   transporter.sendMail({
