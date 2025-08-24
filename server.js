@@ -509,28 +509,28 @@ app.post('/driver-response', (req, res) => {
 });
 
 /* ------------------- DRIVER COMPLETE ------------------- */
+/* ------------------- DRIVER COMPLETE (SAFE VERSION) ------------------- */
 app.post('/driver-complete', async (req, res) => {
   const { driverEmail, jobId } = req.body;
-  if (!driverEmail || !jobId) return res.status(400).json({ error: 'Missing required fields' });
+  if (!driverEmail || !jobId)
+    return res.status(400).json({ error: 'Missing required fields' });
 
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
-  if (!fs.existsSync(jobsFile)) return res.status(404).json({ error: 'Jobs file not found' });
+  if (!fs.existsSync(jobsFile))
+    return res.status(404).json({ error: 'Jobs file not found' });
 
   let jobs = JSON.parse(fs.readFileSync(jobsFile));
-  const jobIndex = jobs.findIndex(j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase());
+  const jobIndex = jobs.findIndex(
+    j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase()
+  );
+
   if (jobIndex === -1) return res.status(404).json({ error: 'Job not found for this driver' });
 
-  const jobData = jobs[jobIndex]; // Save job data for email
-
-  // Mark as completed
+  const jobData = jobs[jobIndex];
   jobData.completed = true;
   jobData.completedAt = new Date();
 
-  // Remove from active driver jobs
-  jobs.splice(jobIndex, 1);
-  fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
-
-  // Save to Supabase completed_jobs
+  // ------------------- SUPABASE INSERT -------------------
   try {
     const { error } = await supabase.from('completed_jobs').insert([{
       id: jobData.id,
@@ -540,32 +540,46 @@ app.post('/driver-complete', async (req, res) => {
       assignedAt: jobData.assignedAt,
       completedAt: jobData.completedAt
     }]);
-    if (error) console.error('Supabase insert error:', error);
+
+    if (error) {
+      console.error('Supabase insert error:', error);
+      return res.status(500).json({ error: 'Failed to save completed job in Supabase' });
+    }
+
+    console.log(`✅ Job ${jobId} saved to completed_jobs successfully.`);
+
+    // Only remove from active jobs after successful Supabase insert
+    jobs.splice(jobIndex, 1);
+    fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+    console.log(`✅ Job ${jobId} removed from driver-jobs.json`);
+
+    // ------------------- SEND ADMIN EMAIL -------------------
+    await transporter.sendMail({
+      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_TO,
+      subject: `Driver Job Completed - ${jobId}`,
+      html: `
+        <p>Driver <strong>${driverEmail}</strong> has <strong>COMPLETED ✅</strong> the job <strong>${jobId}</strong>.</p>
+        <p><strong>Name:</strong> ${jobData.bookingData.name}</p>
+        <p><strong>Email:</strong> ${jobData.bookingData.email}</p>
+        <p><strong>Phone:</strong> ${jobData.bookingData.phone}</p>
+        <p><strong>Pickup:</strong> ${jobData.bookingData.pickup}</p>
+        <p><strong>Dropoff:</strong> ${jobData.bookingData.dropoff}</p>
+        <p><strong>Pickup Time:</strong> ${jobData.bookingData.datetime}</p>
+        <p><strong>Vehicle Type:</strong> ${jobData.bookingData.vehicleType}</p>
+        <p><strong>Driver Payout:</strong> $${jobData.driverPay.toFixed(2)}</p>
+        <p><strong>Notes:</strong> ${jobData.bookingData.notes || 'None'}</p>
+      `
+    });
+
+    res.json({ message: 'Job marked as completed successfully' });
+
   } catch (err) {
-    console.error('Supabase error:', err);
+    console.error('Unexpected error completing job:', err);
+    res.status(500).json({ error: 'Server error completing job' });
   }
-
-  // Send admin email
-  transporter.sendMail({
-    from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-    to: process.env.EMAIL_TO,
-    subject: `Driver Job Completed - ${jobId}`,
-    html: `
-      <p>Driver <strong>${driverEmail}</strong> has <strong>COMPLETED ✅</strong> the job <strong>${jobId}</strong>.</p>
-      <p><strong>Name:</strong> ${jobData.bookingData.name}</p>
-      <p><strong>Email:</strong> ${jobData.bookingData.email}</p>
-      <p><strong>Phone:</strong> ${jobData.bookingData.phone}</p>
-      <p><strong>Pickup:</strong> ${jobData.bookingData.pickup}</p>
-      <p><strong>Dropoff:</strong> ${jobData.bookingData.dropoff}</p>
-      <p><strong>Pickup Time:</strong> ${jobData.bookingData.datetime}</p>
-      <p><strong>Vehicle Type:</strong> ${jobData.bookingData.vehicleType}</p>
-      <p><strong>Driver Payout:</strong> $${jobData.driverPay.toFixed(2)}</p>
-      <p><strong>Notes:</strong> ${jobData.bookingData.notes || 'None'}</p>
-    `
-  }).catch(console.error);
-
-  res.json({ message: 'Job marked as completed successfully' });
 });
+
 
 
 /* ------------------- START SERVER ------------------- */
