@@ -539,6 +539,8 @@ app.post('/driver-complete', async (req, res) => {
     completedAt: jobData.completedAt.toISOString()
   };
 
+  console.log('Job to insert:', JSON.stringify(jobToInsert, null, 2));
+
   try {
     // Use upsert to avoid duplicate primary key errors
     const { error } = await supabase
