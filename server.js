@@ -508,6 +508,7 @@ app.post('/driver-response', (req, res) => {
   res.json({ message: 'Driver response recorded successfully' });
 });
 
+/* ------------------- DRIVER COMPLETE (FIXED) ------------------- */
 app.post('/driver-complete', async (req, res) => {
   const { driverEmail, jobId } = req.body;
   if (!driverEmail || !jobId)
@@ -528,35 +529,30 @@ app.post('/driver-complete', async (req, res) => {
   jobData.completed = true;
   jobData.completedAt = new Date();
 
-  // Prepare Supabase payload
-  const supabasePayload = {
-    id: String(jobData.id),
-    driverEmail: String(jobData.driverEmail || ''),
-    bookingData: typeof jobData.bookingData === 'string'
-      ? JSON.parse(jobData.bookingData)
-      : jobData.bookingData,
-    driverPay: Number(jobData.driverPay || 0),
-    assignedAt: jobData.assignedAt instanceof Date
-      ? jobData.assignedAt.toISOString()
-      : new Date(jobData.assignedAt).toISOString(),
+  // ------------------- PREPARE SAFE INSERT -------------------
+  const jobToInsert = {
+    id: jobData.id,
+    driverEmail: jobData.driverEmail,
+    bookingData: JSON.parse(JSON.stringify(jobData.bookingData)), // serialize safely
+    driverPay: jobData.driverPay,
+    assignedAt: jobData.assignedAt ? new Date(jobData.assignedAt).toISOString() : null,
     completedAt: jobData.completedAt.toISOString()
   };
 
   try {
-    // UPSERT: insert or update on conflict of primary key
-    const { data, error } = await supabase
+    // Use upsert to avoid duplicate primary key errors
+    const { error } = await supabase
       .from('completed_jobs')
-      .upsert([supabasePayload], { onConflict: ['id'] })
-      .select(); // returns inserted/updated row
+      .upsert([jobToInsert], { onConflict: ['id'] });
 
     if (error) {
-      console.error('❌ Supabase upsert error:', error, { supabasePayload });
-      return res.status(500).json({ error: 'Failed to save completed job in Supabase', details: error });
+      console.error('Supabase insert/upsert error:', error);
+      return res.status(500).json({ error: 'Failed to save completed job in Supabase' });
     }
 
-    console.log(`✅ Job ${jobId} upserted to completed_jobs successfully.`);
+    console.log(`✅ Job ${jobId} saved to completed_jobs successfully.`);
 
-    // Remove from active jobs after successful insert/upsert
+    // Remove from active jobs after successful insert
     jobs.splice(jobIndex, 1);
     fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
     console.log(`✅ Job ${jobId} removed from driver-jobs.json`);
@@ -580,11 +576,10 @@ app.post('/driver-complete', async (req, res) => {
       `
     });
 
-    res.json({ message: 'Job marked as completed successfully', data });
-
+    res.json({ message: 'Job marked as completed successfully' });
   } catch (err) {
-    console.error('❌ Unexpected error completing job:', err, { supabasePayload });
-    res.status(500).json({ error: 'Server error completing job', details: err });
+    console.error('Unexpected error completing job:', err);
+    res.status(500).json({ error: 'Server error completing job' });
   }
 });
 
