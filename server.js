@@ -11,19 +11,22 @@ const cron = require('node-cron');
 const PDFDocument = require('pdfkit');
 const streamBuffers = require('stream-buffers');
 
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
+
 const app = express();
 app.use(cors());
 app.use(express.static('public'));
 
-function saveCompletedJob(job) {
-  const completedFile = path.join(__dirname, 'completed-jobs.json');
-  let completed = [];
-  if (fs.existsSync(completedFile)) {
-    completed = JSON.parse(fs.readFileSync(completedFile));
-  }
-  completed.push(job);
-  fs.writeFileSync(completedFile, JSON.stringify(completed, null, 2));
+async function saveCompletedJob(job) {
+  const { error } = await supabase.from('completed_jobs').insert([job]);
+  if (error) console.error('Supabase insert error:', error);
 }
+
 
 /* ------------------- MULTER SETUP ------------------- */
 const storage = multer.diskStorage({
@@ -349,11 +352,13 @@ app.get('/pending-bookings', (req, res) => {
 });
 
 // ------------------- COMPLETED JOBS ROUTE -------------------
-app.get('/completed-jobs', (req, res) => {
-  const completedFile = path.join(__dirname, 'completed-jobs.json');
-  if (!fs.existsSync(completedFile)) return res.json([]);
-  const completedJobs = JSON.parse(fs.readFileSync(completedFile));
-  res.json(completedJobs);
+app.get('/completed-jobs', async (req, res) => {
+  const { data, error } = await supabase.from('completed_jobs').select('*');
+  if (error) {
+    console.error('Error fetching completed jobs:', error);
+    return res.status(500).json({ error: 'Failed to fetch completed jobs' });
+  }
+  res.json(data);
 });
 
 /* ------------------- ADMIN PANEL ------------------- */
