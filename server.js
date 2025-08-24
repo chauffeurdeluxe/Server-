@@ -322,33 +322,38 @@ app.post('/assign-job', (req, res) => {
 });
 
 /* ------------------- PENDING BOOKINGS ROUTE ------------------- */
-app.get('/pending-bookings', (req, res) => {
-  const bookingsFile = path.join(__dirname, 'bookings.json');
-  let bookings = [];
-  if (fs.existsSync(bookingsFile)) bookings = JSON.parse(fs.readFileSync(bookingsFile));
+app.get('/pending-bookings', async (req, res) => {
+  try {
+    const bookingsFile = path.join(__dirname, 'bookings.json');
+    let bookings = [];
+    if (fs.existsSync(bookingsFile)) bookings = JSON.parse(fs.readFileSync(bookingsFile));
 
-  const jobsFile = path.join(__dirname, 'driver-jobs.json');
-  let jobs = [];
-  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+    const jobsFile = path.join(__dirname, 'driver-jobs.json');
+    let jobs = [];
+    if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
 
-  const completedFile = path.join(__dirname, 'completed-jobs.json');
-  let completed = [];
-  if (fs.existsSync(completedFile)) completed = JSON.parse(fs.readFileSync(completedFile));
+    const assignedBookingIds = jobs
+      .filter(j => j.driverEmail && j.driverEmail.trim() !== '')
+      .map(j => j.bookingData.id.toString());
 
-  // IDs of assigned jobs
-  const assignedBookingIds = jobs
-    .filter(j => j.driverEmail && j.driverEmail.trim() !== '')
-    .map(j => j.bookingData.id.toString());
+    // Fetch completed jobs from Supabase
+    const { data: completed, error } = await supabase.from('completed_jobs').select('id');
+    if (error) {
+      console.error('Error fetching completed jobs:', error);
+      return res.status(500).json({ error: 'Failed to fetch completed jobs' });
+    }
+    const completedBookingIds = (completed || []).map(c => c.id.toString());
 
-  // IDs of completed jobs
-  const completedBookingIds = completed.map(c => c.id.toString());
+    // Pending = not assigned AND not completed
+    const pending = bookings.filter(
+      b => !assignedBookingIds.includes(b.id.toString()) && !completedBookingIds.includes(b.id.toString())
+    );
 
-  // Pending = not assigned AND not completed
-  const pending = bookings.filter(
-    b => !assignedBookingIds.includes(b.id.toString()) && !completedBookingIds.includes(b.id.toString())
-  );
-
-  res.json(pending);
+    res.json(pending);
+  } catch (err) {
+    console.error('Pending bookings error:', err);
+    res.status(500).json({ error: 'Server error fetching pending bookings' });
+  }
 });
 
 // ------------------- COMPLETED JOBS ROUTE -------------------
