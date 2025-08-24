@@ -488,7 +488,7 @@ app.post('/driver-response', (req, res) => {
 });
 
 /* ------------------- DRIVER COMPLETE ------------------- */
-app.post('/driver-complete', (req, res) => {
+app.post('/driver-complete', async (req, res) => {
   const { driverEmail, jobId } = req.body;
   if (!driverEmail || !jobId) return res.status(400).json({ error: 'Missing required fields' });
 
@@ -501,16 +501,28 @@ app.post('/driver-complete', (req, res) => {
 
   const jobData = jobs[jobIndex]; // Save job data for email
 
-// Mark as completed
-jobData.completed = true;
-jobData.completedAt = new Date();
+  // Mark as completed
+  jobData.completed = true;
+  jobData.completedAt = new Date();
 
-// Remove from active driver jobs
-jobs.splice(jobIndex, 1);
-fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+  // Remove from active driver jobs
+  jobs.splice(jobIndex, 1);
+  fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
 
-// Save to completed-jobs.json
-saveCompletedJob(jobData);
+  // Save to Supabase completed_jobs
+  try {
+    const { error } = await supabase.from('completed_jobs').insert([{
+      id: jobData.id,
+      driverEmail: jobData.driverEmail,
+      bookingData: jobData.bookingData,
+      driverPay: jobData.driverPay,
+      assignedAt: jobData.assignedAt,
+      completedAt: jobData.completedAt
+    }]);
+    if (error) console.error('Supabase insert error:', error);
+  } catch (err) {
+    console.error('Supabase error:', err);
+  }
 
   // Send admin email
   transporter.sendMail({
@@ -533,6 +545,7 @@ saveCompletedJob(jobData);
 
   res.json({ message: 'Job marked as completed successfully' });
 });
+
 
 /* ------------------- START SERVER ------------------- */
 const PORT = process.env.PORT || 10000;
