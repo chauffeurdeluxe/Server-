@@ -353,12 +353,28 @@ app.get('/pending-bookings', (req, res) => {
 
 // ------------------- COMPLETED JOBS ROUTE -------------------
 app.get('/completed-jobs', async (req, res) => {
-  const { data, error } = await supabase.from('completed_jobs').select('*');
-  if (error) {
-    console.error('Error fetching completed jobs:', error);
-    return res.status(500).json({ error: 'Failed to fetch completed jobs' });
+  try {
+    const { data, error } = await supabase.from('completed_jobs').select('*');
+    if (error) {
+      console.error('Error fetching completed jobs:', error);
+      return res.status(500).json({ error: 'Failed to fetch completed jobs' });
+    }
+
+    // Ensure the structure matches admin HTML expectations
+    const formatted = data.map(job => ({
+      id: job.id,
+      driverEmail: job.driverEmail || '',
+      bookingData: job.bookingData || {},
+      driverPay: job.driverPay || 0,
+      assignedAt: job.assignedAt,
+      completedAt: job.completedAt
+    }));
+
+    res.json(formatted);
+  } catch (err) {
+    console.error('Completed jobs error:', err);
+    res.status(500).json({ error: 'Server error fetching completed jobs' });
   }
-  res.json(data);
 });
 
 /* ------------------- ADMIN PANEL ------------------- */
