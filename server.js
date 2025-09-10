@@ -246,8 +246,28 @@ async function sendInvoicePDF(booking, sessionId) {
 
 /* ------------------- STRIPE CHECKOUT SESSION ------------------- */
 app.post('/create-checkout-session', async (req, res) => {
-  const { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes } = req.body;
-  if (!email || !totalFare || totalFare < 10) return res.status(400).json({ error: 'Invalid booking data.' });
+  // accept both notes and hourlyNotes
+  const {
+    name,
+    email,
+    phone,
+    pickup,
+    dropoff,
+    datetime,
+    vehicleType,
+    totalFare,
+    distanceKm,
+    durationMin,
+    notes,
+    hourlyNotes
+  } = req.body;
+
+  // merge them: if hourlyNotes exists, use it, otherwise fall back to notes
+  const finalNotes = hourlyNotes || notes || '';
+
+  if (!email || !totalFare || totalFare < 10) {
+    return res.status(400).json({ error: 'Invalid booking data.' });
+  }
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -257,15 +277,31 @@ app.post('/create-checkout-session', async (req, res) => {
       line_items: [{
         price_data: {
           currency: 'aud',
-          product_data: { name: `Chauffeur Booking – ${vehicleType.toUpperCase()}`, description: `Pickup: ${pickup}, Dropoff: ${dropoff}, Time: ${datetime}` },
+          product_data: {
+            name: `Chauffeur Booking – ${vehicleType.toUpperCase()}`,
+            description: `Pickup: ${pickup}, Dropoff: ${dropoff}, Time: ${datetime}`
+          },
           unit_amount: Math.round(totalFare * 100)
         },
         quantity: 1
       }],
-      metadata: { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare: totalFare.toString(), notes: notes || '', distanceKm: distanceKm ? distanceKm.toString() : 'N/A', durationMin: durationMin ? durationMin.toString() : 'N/A' },
+      metadata: {
+        name,
+        email,
+        phone,
+        pickup,
+        dropoff,
+        datetime,
+        vehicleType,
+        totalFare: totalFare.toString(),
+        notes: finalNotes,  // ✅ always include notes
+        distanceKm: distanceKm ? distanceKm.toString() : 'N/A',
+        durationMin: durationMin ? durationMin.toString() : 'N/A'
+      },
       success_url: 'https://bookingform-pi.vercel.app/success.html',
       cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
     });
+
     res.status(200).json({ id: session.id, url: session.url });
   } catch (err) {
     res.status(500).json({ error: 'Stripe session creation failed.' });
