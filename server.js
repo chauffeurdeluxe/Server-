@@ -595,6 +595,30 @@ app.post('/driver-complete', async (req, res) => {
     fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
     console.log(`✅ Job ${jobId} removed from driver-jobs.json`);
 
+    /* ------------------- DRIVER HISTORY ------------------- */
+app.post('/driver-history', async (req, res) => {
+  const { driverEmail } = req.body;
+  if (!driverEmail) return res.status(400).json({ error: 'Email required' });
+
+  try {
+    const { data, error } = await supabase
+      .from('completed_jobs')
+      .select('*')
+      .eq('driverEmail', driverEmail.toLowerCase())
+      .order('completedAt', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching driver history:', error);
+      return res.status(500).json({ error: 'Failed to fetch driver history' });
+    }
+
+    res.json(data || []);
+  } catch (err) {
+    console.error('Driver history error:', err);
+    res.status(500).json({ error: 'Server error fetching driver history' });
+  }
+});
+
     // Send admin email
     await transporter.sendMail({
       from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
