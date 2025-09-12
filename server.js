@@ -456,20 +456,17 @@ app.delete('/jobs/:id', (req, res) => {
   res.json({ message: `Job with ID ${jobId} deleted` });
 });
 
-/* ---------------- DRIVER LOGIN ---------------- */
+/* ------------------- DRIVER LOGIN ------------------- */
 app.post('/driver-login', (req, res) => {
   const { email } = req.body;
-  let driver = drivers.find(d => d.email === email);
+  if (!email) return res.status(400).json({ error: 'Email required' });
 
-  if (!driver) {
-    driver = { email, jobs: [], completedJobs: [] };
-    drivers.push(driver);
-  }
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  let jobs = [];
+  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
 
-  res.json({
-    jobs: driver.jobs || [],
-    completedJobs: driver.completedJobs || []
-  });
+  const driverJobs = jobs.filter(job => job.driverEmail.toLowerCase() === email.toLowerCase());
+  res.json({ jobs: driverJobs });
 });
 
 /* ------------------- RENEWAL REMINDERS ------------------- */
@@ -547,39 +544,26 @@ app.post('/driver-response', (req, res) => {
   res.json({ message: 'Driver response recorded successfully' });
 });
 
-/* ---------------- DRIVER COMPLETE ---------------- */
-app.post('/driver-complete', (req, res) => {
+/* ------------------- DRIVER COMPLETE (FIXED) ------------------- */
+app.post('/driver-complete', async (req, res) => {
   const { driverEmail, jobId } = req.body;
-  const driver = drivers.find(d => d.email === driverEmail);
+  if (!driverEmail || !jobId)
+    return res.status(400).json({ error: 'Missing required fields' });
 
-  if (!driver) {
-    return res.status(404).json({ error: 'Driver not found' });
-  }
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  if (!fs.existsSync(jobsFile))
+    return res.status(404).json({ error: 'Jobs file not found' });
 
-  // Find job in active jobs
-  const jobIndex = driver.jobs.findIndex(j => j.id === jobId);
-  if (jobIndex === -1) {
-    return res.status(404).json({ error: 'Job not found or already completed' });
-  }
+  let jobs = JSON.parse(fs.readFileSync(jobsFile));
+  const jobIndex = jobs.findIndex(
+    j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase()
+  );
 
-  const job = driver.jobs[jobIndex];
+  if (jobIndex === -1) return res.status(404).json({ error: 'Job not found for this driver' });
 
-  // Remove from active jobs
-  driver.jobs.splice(jobIndex, 1);
-
-  // Push into completed jobs
-  const completedJob = {
-    ...job,
-    completedAt: new Date().toISOString()
-  };
-
-  if (!driver.completedJobs) {
-    driver.completedJobs = [];
-  }
-  driver.completedJobs.push(completedJob);
-
-  res.json({ message: 'Job marked as completed', completedJob });
-});
+  const jobData = jobs[jobIndex];
+  jobData.completed = true;
+  jobData.completedAt = new Date();
 
   // ------------------- PREPARE SAFE INSERT -------------------
   const jobToInsert = {
