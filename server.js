@@ -461,12 +461,30 @@ app.post('/driver-login', (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
 
+  // Paths to files
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
-  let jobs = [];
-  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+  const completedFile = path.join(__dirname, 'completed-jobs.json');
 
-  const driverJobs = jobs.filter(job => job.driverEmail.toLowerCase() === email.toLowerCase());
-  res.json({ jobs: driverJobs });
+  // Read driver-jobs.json
+  let jobs = [];
+  if (fs.existsSync(jobsFile)) {
+    jobs = JSON.parse(fs.readFileSync(jobsFile, 'utf8'));
+  }
+
+  // Read completed-jobs.json
+  let completedJobs = [];
+  if (fs.existsSync(completedFile)) {
+    completedJobs = JSON.parse(fs.readFileSync(completedFile, 'utf8'));
+  }
+
+  // Filter both by driver email
+  const driverJobs = jobs.filter(job => job.driverEmail?.toLowerCase() === email.toLowerCase());
+  const driverCompletedJobs = completedJobs.filter(job => job.driverEmail?.toLowerCase() === email.toLowerCase());
+
+  res.json({
+    jobs: driverJobs,
+    completed: driverCompletedJobs
+  });
 });
 
 /* ------------------- RENEWAL REMINDERS ------------------- */
