@@ -456,42 +456,38 @@ app.delete('/jobs/:id', (req, res) => {
   res.json({ message: `Job with ID ${jobId} deleted` });
 });
 
-/* ------------------- DRIVER LOGIN (SUPABASE ONLY) ------------------- */
+/* ------------------- DRIVER LOGIN ------------------- */
 app.post('/driver-login', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
 
-  try {
-    // 1. Active jobs
-    const { data: driverJobs, error: jobsError } = await supabase
-      .from('jobs')
-      .select('*')
-      .ilike('driverEmail', email);
+  // Paths to files
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
 
-    if (jobsError) {
-      console.error('Jobs fetch error:', jobsError.message);
-      return res.status(500).json({ error: 'Failed to fetch active jobs' });
-    }
-
-    // 2. Completed jobs
-    const { data: completedJobs, error: completedError } = await supabase
-      .from('completed_jobs')
-      .select('*')
-      .ilike('driverEmail', email);
-
-    if (completedError) {
-      console.error('Completed fetch error:', completedError.message);
-      return res.status(500).json({ error: 'Failed to fetch completed jobs' });
-    }
-
-    res.json({
-      jobs: driverJobs || [],
-      completed: completedJobs || []
-    });
-  } catch (err) {
-    console.error('Server error:', err.message);
-    res.status(500).json({ error: 'Unexpected error' });
+  // Read driver-jobs.json
+  let jobs = [];
+  if (fs.existsSync(jobsFile)) {
+    jobs = JSON.parse(fs.readFileSync(jobsFile, 'utf8'));
   }
+
+  // Filter active jobs for this driver
+  const driverJobs = jobs.filter(job => job.driverEmail?.toLowerCase() === email.toLowerCase());
+
+  // ✅ Fetch completed jobs from Supabase
+  const { data: completedJobs, error } = await supabase
+    .from('completed_jobs')
+    .select('*')
+    .ilike('driverEmail', email);
+
+  if (error) {
+    console.error('Error fetching completed jobs:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch completed jobs' });
+  }
+
+  res.json({
+    jobs: driverJobs,
+    completed: completedJobs || []
+  });
 });
 
 /* ------------------- RENEWAL REMINDERS ------------------- */
@@ -569,44 +565,26 @@ app.post('/driver-response', (req, res) => {
   res.json({ message: 'Driver response recorded successfully' });
 });
 
-/* ------------------- DRIVER COMPLETE (SUPABASE ONLY) ------------------- */
+/* ------------------- DRIVER COMPLETE (FIXED) ------------------- */
 app.post('/driver-complete', async (req, res) => {
   const { driverEmail, jobId } = req.body;
-  if (!driverEmail || !jobId) {
+  if (!driverEmail || !jobId)
     return res.status(400).json({ error: 'Missing required fields' });
-  }
 
-  try {
-    // 1. Get the job from jobs table
-    const { data: jobData, error: fetchError } = await supabase
-      .from('jobs')
-      .select('*')
-      .eq('id', jobId)
-      .single();
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  if (!fs.existsSync(jobsFile))
+    return res.status(404).json({ error: 'Jobs file not found' });
 
-    if (fetchError || !jobData) {
-      return res.status(404).json({ error: 'Job not found in jobs table' });
-    }
+  let jobs = JSON.parse(fs.readFileSync(jobsFile));
+  const jobIndex = jobs.findIndex(
+    j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase()
+  );
 
-    // 2. Insert into completed_jobs
-    const { error: insertError } = await supabase
-      .from('completed_jobs')
-      .insert([{ ...jobData, driverEmail, completed: true, completedAt: new Date() }]);
+  if (jobIndex === -1) return res.status(404).json({ error: 'Job not found for this driver' });
 
-    if (insertError) {
-      console.error('Insert error:', insertError.message);
-      return res.status(500).json({ error: 'Failed to save job to completed_jobs' });
-    }
-
-    // 3. Delete from jobs table (so Admin only sees active jobs)
-    await supabase.from('jobs').delete().eq('id', jobId);
-
-    res.json({ success: true, message: 'Job completed and saved permanently' });
-  } catch (err) {
-    console.error('Server error:', err.message);
-    res.status(500).json({ error: 'Unexpected error' });
-  }
-});
+  const jobData = jobs[jobIndex];
+  jobData.completed = true;
+  jobData.completedAt = new Date();
 
   // ------------------- PREPARE SAFE INSERT -------------------
   const jobToInsert = {
