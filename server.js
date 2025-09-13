@@ -457,13 +457,12 @@ app.delete('/jobs/:id', (req, res) => {
 });
 
 /* ------------------- DRIVER LOGIN ------------------- */
-app.post('/driver-login', (req, res) => {
+app.post('/driver-login', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
 
   // Paths to files
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
-  const completedFile = path.join(__dirname, 'completed-jobs.json');
 
   // Read driver-jobs.json
   let jobs = [];
@@ -471,19 +470,23 @@ app.post('/driver-login', (req, res) => {
     jobs = JSON.parse(fs.readFileSync(jobsFile, 'utf8'));
   }
 
-  // Read completed-jobs.json
-  let completedJobs = [];
-  if (fs.existsSync(completedFile)) {
-    completedJobs = JSON.parse(fs.readFileSync(completedFile, 'utf8'));
-  }
-
-  // Filter both by driver email
+  // Filter active jobs for this driver
   const driverJobs = jobs.filter(job => job.driverEmail?.toLowerCase() === email.toLowerCase());
-  const driverCompletedJobs = completedJobs.filter(job => job.driverEmail?.toLowerCase() === email.toLowerCase());
+
+  // ✅ Fetch completed jobs from Supabase
+  const { data: completedJobs, error } = await supabase
+    .from('completed_jobs')
+    .select('*')
+    .ilike('driverEmail', email);
+
+  if (error) {
+    console.error('Error fetching completed jobs:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch completed jobs' });
+  }
 
   res.json({
     jobs: driverJobs,
-    completed: driverCompletedJobs
+    completed: completedJobs || []
   });
 });
 
