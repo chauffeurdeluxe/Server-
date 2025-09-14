@@ -325,23 +325,26 @@ app.post('/assign-job', async (req, res) => {
   try {
     const { bookingData } = req.body;
 
-    // ✅ Validation for required fields
+    // ✅ Validation
     const { id, assignedto } = bookingData;
     if (!id || !assignedto) {
       return res.status(400).json({ error: 'Missing driver or booking id' });
     }
 
-    // Insert job into completed_jobs
+    // Calculate driver pay
+    const driverPay = bookingData.fare ? bookingData.fare * 0.8 : 0;
+
+    // Insert into completed_jobs
     const { error: insertError } = await supabase
       .from('completed_jobs')
       .insert([
         {
           id,
-          bookingdata: bookingData,
-          driveremail: assignedto, // consistent with schema
-          driverpay: bookingData.fare ? bookingData.fare * 0.8 : 0,
-          assignedat: new Date().toISOString(),
-          completedat: new Date().toISOString()
+          bookingData, // keep consistent with other routes
+          driverEmail: assignedto,
+          driverPay,
+          assignedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString()
         }
       ]);
 
@@ -350,7 +353,7 @@ app.post('/assign-job', async (req, res) => {
       return res.status(500).json({ error: 'Error assigning job' });
     }
 
-    // Delete job from pending_jobs
+    // Delete from pending_jobs
     const { error: deleteError } = await supabase
       .from('pending_jobs')
       .delete()
@@ -360,6 +363,24 @@ app.post('/assign-job', async (req, res) => {
       console.error(deleteError);
       return res.status(500).json({ error: 'Error deleting from pending jobs' });
     }
+
+    // ✅ Send email notification to driver
+    await transporter.sendMail({
+      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+      to: assignedto,
+      subject: `New Chauffeur Job Assigned`,
+      html: `
+        <h2>You have a new job assigned</h2>
+        <p><strong>Name:</strong> ${bookingData.customername}</p>
+        <p><strong>Email:</strong> ${bookingData.customeremail}</p>
+        <p><strong>Phone:</strong> ${bookingData.customerphone}</p>
+        <p><strong>Pickup:</strong> ${bookingData.pickup}</p>
+        <p><strong>Dropoff:</strong> ${bookingData.dropoff}</p>
+        <p><strong>Pickup Time:</strong> ${bookingData.pickuptime}</p>
+        <p><strong>Vehicle Type:</strong> ${bookingData.vehicletype}</p>
+        <p><strong>Driver Payout:</strong> $${driverPay}</p>
+      `
+    });
 
     res.json({ message: 'Job assigned successfully' });
   } catch (err) {
