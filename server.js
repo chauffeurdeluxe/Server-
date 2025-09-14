@@ -7,7 +7,7 @@ const nodemailer = require('nodemailer');
 const multer = require('multer');
 const PDFDocument = require('pdfkit');
 const streamBuffers = require('stream-buffers');
-
+const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 
 const supabase = createClient(
@@ -26,7 +26,7 @@ const transporter = nodemailer.createTransport({
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
-/* ------------------- MULTER SETUP ------------------- */
+/* ------------------- MULTER ------------------- */
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
@@ -39,9 +39,7 @@ async function sendEmail(booking) {
       subject: `New Booking Paid - ${booking.name}`,
       html: `<p>Booking details:</p><pre>${JSON.stringify(booking, null, 2)}</pre>`
     });
-  } catch (err) {
-    console.error('Send email error:', err);
-  }
+  } catch (err) { console.error('Send email error:', err); }
 }
 
 async function sendInvoicePDF(booking, sessionId) {
@@ -84,9 +82,7 @@ async function sendInvoicePDF(booking, sessionId) {
         attachments: [{ filename: `invoice-${sessionId}.pdf`, content: pdfBuffer }]
       });
     });
-  } catch (err) {
-    console.error('Send PDF invoice error:', err);
-  }
+  } catch (err) { console.error('Send PDF invoice error:', err); }
 }
 
 /* ------------------- PARTNER FORM ------------------- */
@@ -101,22 +97,12 @@ app.post('/partner-form', upload.fields([
 
     const fileData = {};
     for (let key in files) {
-      fileData[key] = {
-        filename: files[key][0].originalname,
-        buffer: files[key][0].buffer
-      };
+      fileData[key] = { filename: files[key][0].originalname, buffer: files[key][0].buffer };
     }
 
-    await supabase.from('drivers').insert([{
-      ...data,
-      files: fileData,
-      submittedAt: new Date().toISOString()
-    }]);
+    await supabase.from('drivers').insert([{ ...data, files: fileData, submittedAt: new Date().toISOString() }]);
 
-    const attachments = Object.values(files).map(f => ({
-      filename: f[0].originalname,
-      content: f[0].buffer
-    }));
+    const attachments = Object.values(files).map(f => ({ filename: f[0].originalname, content: f[0].buffer }));
 
     await transporter.sendMail({
       from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
@@ -145,9 +131,7 @@ app.post('/partner-form', upload.fields([
 /* ------------------- STRIPE CHECKOUT ------------------- */
 app.post('/create-checkout-session', async (req, res) => {
   try {
-    const { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes, hourlyNotes } = req.body;
-    const finalNotes = hourlyNotes || notes || '';
-
+    const { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes } = req.body;
     if (!email || !totalFare || totalFare < 10) return res.status(400).json({ error: 'Invalid booking data.' });
 
     const session = await stripe.checkout.sessions.create({
@@ -157,17 +141,12 @@ app.post('/create-checkout-session', async (req, res) => {
       line_items: [{
         price_data: {
           currency: 'aud',
-          product_data: { name: `Chauffeur Booking – ${vehicleType.toUpperCase()}`, description: `Pickup: ${pickup}, Dropoff: ${dropoff}, Time: ${datetime}` },
+          product_data: { name: `Chauffeur Booking – ${vehicleType}`, description: `Pickup: ${pickup}, Dropoff: ${dropoff}` },
           unit_amount: Math.round(totalFare * 100)
         },
         quantity: 1
       }],
-      metadata: {
-        name, email, phone, pickup, dropoff, datetime, vehicleType,
-        totalFare: totalFare.toString(), notes: finalNotes,
-        distanceKm: distanceKm ? distanceKm.toString() : 'N/A',
-        durationMin: durationMin ? durationMin.toString() : 'N/A'
-      },
+      metadata: { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes },
       success_url: 'https://bookingform-pi.vercel.app/success.html',
       cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
     });
@@ -184,11 +163,8 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   const sig = req.headers['stripe-signature'];
   let event;
 
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
+  try { event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET); }
+  catch (err) { return res.status(400).send(`Webhook Error: ${err.message}`); }
 
   if (event.type === 'checkout.session.completed') {
     const s = event.data.object;
@@ -209,20 +185,10 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       paidAt: new Date().toISOString()
     };
 
-    // Save booking to Supabase
     await supabase.from('bookings').insert([booking]);
-
-    // Add to driver jobs
     const driverPay = parseFloat((booking.totalFare / 1.45).toFixed(2));
-    await supabase.from('driver_jobs').insert([{
-      id: booking.id,
-      driverEmail: '',
-      bookingData: booking,
-      driverPay,
-      assignedAt: new Date().toISOString()
-    }]);
+    await supabase.from('driver_jobs').insert([{ id: booking.id, driverEmail: '', bookingData: booking, driverPay, assignedAt: new Date().toISOString() }]);
 
-    // Send emails & invoice
     sendEmail(booking).catch(console.error);
     sendInvoicePDF(booking, s.id).catch(console.error);
   }
@@ -239,24 +205,17 @@ app.post('/assign-job', async (req, res) => {
   if (!booking) return res.status(404).json({ error: 'Booking not found' });
 
   const driverPay = parseFloat((booking.totalFare / 1.45).toFixed(2));
-  const newJob = {
-    id: booking.id,
-    driverEmail,
-    bookingData: booking,
-    driverPay,
-    assignedAt: new Date().toISOString()
-  };
+  const newJob = { id: booking.id, driverEmail, bookingData: booking, driverPay, assignedAt: new Date().toISOString() };
 
   await supabase.from('driver_jobs').insert([newJob]);
-
   transporter.sendMail({
     from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
     to: driverEmail,
-    subject: `New Chauffeur Job Assigned`,
+    subject: 'New Chauffeur Job Assigned',
     html: `<h2>You have a new job assigned</h2><pre>${JSON.stringify(booking, null, 2)}</pre>`
   }).catch(console.error);
 
-  res.json({ message: 'Job assigned successfully' });
+  res.json({ message: 'Job assigned successfully', jobId: booking.id });
 });
 
 /* ------------------- DRIVER RESPONSE ------------------- */
@@ -267,11 +226,8 @@ app.post('/driver-response', async (req, res) => {
   const { data: job } = await supabase.from('driver_jobs').select('*').eq('id', jobId).single();
   if (!job) return res.status(404).json({ error: 'Job not found' });
 
-  if (confirmed) {
-    await supabase.from('driver_jobs').update({ driverConfirmed: true, responseAt: new Date().toISOString() }).eq('id', jobId);
-  } else {
-    await supabase.from('driver_jobs').delete().eq('id', jobId);
-  }
+  if (confirmed) await supabase.from('driver_jobs').update({ driverConfirmed: true, responseAt: new Date().toISOString() }).eq('id', jobId);
+  else await supabase.from('driver_jobs').delete().eq('id', jobId);
 
   transporter.sendMail({
     from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
@@ -291,12 +247,7 @@ app.post('/driver-complete', async (req, res) => {
   const { data: job } = await supabase.from('driver_jobs').select('*').eq('id', jobId).single();
   if (!job) return res.status(404).json({ error: 'Job not found' });
 
-  const completedJob = {
-    ...job,
-    completed: true,
-    completedAt: new Date().toISOString()
-  };
-
+  const completedJob = { ...job, completed: true, completedAt: new Date().toISOString() };
   await supabase.from('completed_jobs').upsert([completedJob], { onConflict: ['id'] });
   await supabase.from('driver_jobs').delete().eq('id', jobId);
 
@@ -362,7 +313,6 @@ app.post('/driver-login', async (req, res) => {
 });
 
 /* ------------------- RENEWAL REMINDERS ------------------- */
-const cron = require('node-cron');
 cron.schedule('0 9 * * *', async () => {
   try {
     const { data: drivers } = await supabase.from('drivers').select('*');
@@ -386,9 +336,7 @@ cron.schedule('0 9 * * *', async () => {
           }
         });
     }
-  } catch (err) {
-    console.error('Renewal reminder error:', err);
-  }
+  } catch (err) { console.error('Renewal reminder error:', err); }
 });
 
 /* ------------------- START SERVER ------------------- */
