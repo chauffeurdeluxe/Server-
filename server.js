@@ -20,9 +20,6 @@ const supabase = createClient(
 const app = express();
 app.use(cors());
 app.use(express.static('public'));
-
-// Stripe webhook requires raw body
-app.use('/webhook', bodyParser.raw({ type: 'application/json' }));
 app.use(bodyParser.json());
 
 const transporter = nodemailer.createTransport({
@@ -100,7 +97,14 @@ app.post('/create-checkout-session', async (req, res) => {
         },
         quantity: 1
       }],
-      metadata: { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare: totalFare.toString(), distanceKm: distanceKm.toString(), durationMin: durationMin.toString(), notes: notes || '' },
+      metadata: {
+        name, email, phone, pickup, dropoff,
+        datetime, vehicleType,
+        totalFare: totalFare.toString(),
+        distanceKm: distanceKm.toString(),
+        durationMin: durationMin.toString(),
+        notes: notes || ''
+      },
       success_url: 'https://bookingform-pi.vercel.app/success.html',
       cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
     });
@@ -113,7 +117,7 @@ app.post('/create-checkout-session', async (req, res) => {
 });
 
 /* ------------------- STRIPE WEBHOOK ------------------- */
-app.post('/webhook', async (req, res) => {
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
@@ -152,9 +156,7 @@ app.post('/webhook', async (req, res) => {
 
       await sendEmail(booking);
       await sendInvoicePDF(booking, session.id);
-    } catch (err) {
-      console.error('Webhook insert error:', err);
-    }
+    } catch (err) { console.error('Webhook insert error:', err); }
   }
 
   res.status(200).json({ received: true });
@@ -171,9 +173,7 @@ async function sendEmail(booking) {
              <p>Pickup: ${booking.pickup}</p>
              <p>Dropoff: ${booking.dropoff}</p>`
     });
-  } catch (err) {
-    console.error('Email error:', err);
-  }
+  } catch (err) { console.error('Email error:', err); }
 }
 
 async function sendInvoicePDF(booking, sessionId) {
@@ -181,21 +181,8 @@ async function sendInvoicePDF(booking, sessionId) {
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
     const bufferStream = new streamBuffers.WritableStreamBuffer();
     doc.pipe(bufferStream);
-
     doc.fontSize(20).fillColor('#B9975B').text('CHAUFFEUR DE LUXE', { align: 'center' });
     doc.fontSize(18).fillColor('black').text('Invoice', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(14).fillColor('black')
-       .text(`Customer: ${booking.customername}`)
-       .text(`Pickup: ${booking.pickup}`)
-       .text(`Dropoff: ${booking.dropoff}`)
-       .text(`Date/Time: ${booking.pickuptime}`)
-       .text(`Vehicle: ${booking.vehicletype}`)
-       .text(`Fare: $${booking.fare.toFixed(2)}`)
-       .text(`Distance: ${booking.distance_km} km`)
-       .text(`Duration: ${booking.duration_min} min`)
-       .text(`Notes: ${booking.notes || 'N/A'}`);
-    
     doc.end();
 
     bufferStream.on('finish', async () => {
@@ -208,10 +195,31 @@ async function sendInvoicePDF(booking, sessionId) {
         attachments: [{ filename: 'invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
       });
     });
-  } catch (err) {
-    console.error('Invoice PDF error:', err);
-  }
+  } catch (err) { console.error('Invoice PDF error:', err); }
 }
+
+/* ------------------- GET PENDING & COMPLETED JOBS ------------------- */
+app.get('/pending-jobs', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('pending_jobs').select('*').order('createdat', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (err) {
+    console.error('Fetch pending jobs error:', err);
+    res.status(500).json({ error: 'Failed to fetch pending jobs' });
+  }
+});
+
+app.get('/completed-jobs', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('completed_jobs').select('*').order('assignedat', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (err) {
+    console.error('Fetch completed jobs error:', err);
+    res.status(500).json({ error: 'Failed to fetch completed jobs' });
+  }
+});
 
 /* ------------------- ASSIGN JOB ------------------- */
 app.post('/assign-job', async (req, res) => {
@@ -269,15 +277,19 @@ app.post('/driver-login', async (req, res) => {
   if (!email) return res.status(400).json({ error: 'Email required' });
 
   try {
-    const { data: pendingJobs } = await supabase
+    const { data: pendingJobs, error: pendingError } = await supabase
       .from('pending_jobs')
       .select('*')
       .eq('assignedto', email);
 
-    const { data: completedJobs } = await supabase
+    const { data: completedJobs, error: completedError } = await supabase
       .from('completed_jobs')
       .select('*')
       .ilike('assignedto', email);
+
+    if (pendingError || completedError) {
+      return res.status(500).json({ error: 'Failed to fetch driver jobs' });
+    }
 
     res.json({ jobs: pendingJobs || [], completed: completedJobs || [] });
   } catch (err) {
