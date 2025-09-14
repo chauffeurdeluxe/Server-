@@ -320,48 +320,53 @@ function calculateDriverPayout(clientFare) {
   return parseFloat(net.toFixed(2));
 }
 
+// ------------------- ASSIGN JOB -------------------
 app.post('/assign-job', async (req, res) => {
   try {
     const { bookingData } = req.body;
 
+    // ✅ Validation for required fields
     const { id, assignedto } = bookingData;
     if (!id || !assignedto) {
       return res.status(400).json({ error: 'Missing driver or booking id' });
     }
 
-  try {
-    // Fetch the job from pending_jobs
-    const { data: jobData, error: fetchError } = await supabase
+    // Insert job into completed_jobs
+    const { error: insertError } = await supabase
+      .from('completed_jobs')
+      .insert([
+        {
+          id,
+          bookingdata: bookingData,
+          driveremail: assignedto, // consistent with schema
+          driverpay: bookingData.fare ? bookingData.fare * 0.8 : 0,
+          assignedat: new Date().toISOString(),
+          completedat: new Date().toISOString()
+        }
+      ]);
+
+    if (insertError) {
+      console.error(insertError);
+      return res.status(500).json({ error: 'Error assigning job' });
+    }
+
+    // Delete job from pending_jobs
+    const { error: deleteError } = await supabase
       .from('pending_jobs')
-      .select('*')
-      .eq('id', bookingId)
-      .single();
+      .delete()
+      .eq('id', id);
 
-    if (fetchError || !jobData) {
-      return res.status(404).json({ error: 'Job not found' });
+    if (deleteError) {
+      console.error(deleteError);
+      return res.status(500).json({ error: 'Error deleting from pending jobs' });
     }
 
-    if (jobData.status === 'assigned') {
-      return res.status(400).json({ error: 'Job already assigned' });
-    }
-
-    // Calculate driver pay (optional)
-    const driverPay = jobData.fare ? parseFloat((jobData.fare / 1.45).toFixed(2)) : 0;
-
-    // Update pending_jobs: assign to driver
-    const { error: updateError } = await supabase
-      .from('pending_jobs')
-      .update({
-        assignedto: driverEmail,
-        assignedat: new Date().toISOString(),
-        status: 'assigned',
-        driverpay: driverPay
-      })
-      .eq('id', bookingId);
-
-    if (updateError) {
-      return res.status(500).json({ error: 'Failed to assign job' });
-    }
+    res.json({ message: 'Job assigned successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error in /assign-job' });
+  }
+});
 
     // Send email notification to driver
     await transporter.sendMail({
