@@ -93,7 +93,7 @@ app.post('/partner-form', upload.fields([
 });
 
 /* ------------------- STRIPE WEBHOOK ------------------- */
-app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
@@ -123,38 +123,36 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
       totalFare: parseFloat(s.metadata.totalFare),
       distanceKm: s.metadata.distanceKm,
       durationMin: s.metadata.durationMin,
-      notes: s.metadata.notes,
-      paidAt: new Date()
+      notes: s.metadata.notes
     };
 
-    const bookingsFile = path.join(__dirname, 'bookings.json');
-    let allBookings = [];
-    if (fs.existsSync(bookingsFile)) allBookings = JSON.parse(fs.readFileSync(bookingsFile));
-    allBookings.push(booking);
-    fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
-    console.log('✅ Booking saved:', booking.id);
+    try {
+      // Insert into Supabase pending_jobs
+      await supabase.from('pending_jobs').insert([{
+        id: parseInt(booking.id),
+        customername: booking.name,
+        customeremail: booking.email,
+        customerphone: booking.phone,
+        pickup: booking.pickup,
+        dropoff: booking.dropoff,
+        pickuptime: new Date(booking.datetime),
+        vehicletype: booking.vehicleType,
+        fare: booking.totalFare,
+        status: 'pending',
+        createdat: new Date(),
+        assignedat: null,
+        assignedto: null
+      }]);
 
-    // Add to driver jobs
-    const jobsFile = path.join(__dirname, 'driver-jobs.json');
-    let jobs = [];
-    if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+      console.log(`✅ Booking ${bookingId} saved to pending_jobs`);
+      
+      // Send admin email & invoice PDF as before
+      sendEmail(booking).catch(console.error);
+      sendInvoicePDF(booking, s.id).catch(console.error);
 
-    const driverPay = calculateDriverPayout(parseFloat(booking.totalFare));
-
-    const newJob = {
-      id: booking.id,
-      driverEmail: '',
-      bookingData: booking,
-      driverPay,
-      assignedAt: new Date()
-    };
-
-    jobs.push(newJob);
-    fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
-    console.log('✅ Booking also added to driver-jobs.json:', newJob.id);
-
-    sendEmail(booking).catch(console.error);
-    sendInvoicePDF(booking, s.id).catch(console.error);
+    } catch (err) {
+      console.error('Supabase insert error:', err);
+    }
   }
 
   res.json({ received: true });
