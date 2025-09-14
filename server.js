@@ -221,7 +221,6 @@ app.get('/completed-jobs', async (req, res) => {
   }
 });
 
-/* ------------------- ASSIGN JOB ------------------- */
 app.post('/assign-job', async (req, res) => {
   try {
     const { bookingData } = req.body;
@@ -229,7 +228,7 @@ app.post('/assign-job', async (req, res) => {
       return res.status(400).json({ error: 'Missing booking ID or driver email' });
     }
 
-    // Fetch pending job
+    // Fetch the pending job
     const { data: pendingData, error: fetchError } = await supabase
       .from('pending_jobs')
       .select('*')
@@ -238,25 +237,35 @@ app.post('/assign-job', async (req, res) => {
 
     if (fetchError || !pendingData) return res.status(404).json({ error: 'Booking not found' });
 
-    const driverPay = parseFloat(pendingData.fare) * 0.8;
+    const driverPay = pendingData.fare * 0.8;
 
-    // Insert into completed_jobs aligned with Supabase schema
+    // Insert into completed_jobs using structured columns
     const { error: insertError } = await supabase.from('completed_jobs').insert([{
       id: pendingData.id,
+      customername: pendingData.customername,
+      customeremail: pendingData.customeremail,
+      customerphone: pendingData.customerphone,
+      pickup: pendingData.pickup,
+      dropoff: pendingData.dropoff,
+      pickuptime: pendingData.pickuptime,
+      vehicletype: pendingData.vehicletype,
+      fare: pendingData.fare,
+      status: 'completed',
+      createdat: pendingData.createdat,
+      assignedto: bookingData.assignedto,
+      distance_km: pendingData.distance_km,
+      duration_min: pendingData.duration_min,
+      notes: pendingData.notes,
       driverEmail: bookingData.assignedto,
-      bookingData: pendingData, // store full pending job as JSON
       driverPay,
-      assignedAt: new Date().toISOString(),
-      completedAt: null
+      assignedat: new Date().toISOString(),
+      completedAt: new Date().toISOString()
     }]);
+
     if (insertError) return res.status(500).json({ error: 'Error assigning job' });
 
     // Delete from pending_jobs
-    const { error: deleteError } = await supabase
-      .from('pending_jobs')
-      .delete()
-      .eq('id', bookingData.id);
-    if (deleteError) console.warn('Failed to delete from pending_jobs:', deleteError);
+    await supabase.from('pending_jobs').delete().eq('id', bookingData.id);
 
     // Notify driver via email
     await transporter.sendMail({
@@ -276,7 +285,6 @@ app.post('/assign-job', async (req, res) => {
   }
 });
 
-/* ------------------- DRIVER LOGIN ------------------- */
 app.post('/driver-login', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
@@ -290,7 +298,7 @@ app.post('/driver-login', async (req, res) => {
     const { data: completedJobs, error: completedError } = await supabase
       .from('completed_jobs')
       .select('*')
-      .ilike('assignedto', email);
+      .eq('assignedto', email);
 
     if (pendingError || completedError) {
       return res.status(500).json({ error: 'Failed to fetch driver jobs' });
