@@ -1,4 +1,3 @@
-// ------------------- PART 1: SETUP -------------------
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -19,18 +18,19 @@ const supabase = createClient(
 );
 
 const app = express();
-
-// ------------------- CORS & STATIC -------------------
 app.use(cors());
 app.use(express.static('public'));
 
-// ------------------- NODEMAILER -------------------
+// Stripe webhook requires raw body
+app.use('/webhook', bodyParser.raw({ type: 'application/json' }));
+app.use(bodyParser.json());
+
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
-// ------------------- MULTER FILE UPLOAD -------------------
+/* ------------------- MULTER ------------------- */
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadPath = path.join(__dirname, 'uploads');
@@ -43,7 +43,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ------------------- PARTNER FORM -------------------
+/* ------------------- PARTNER FORM ------------------- */
 app.post('/partner-form', upload.fields([
   { name: 'insuranceFile', maxCount: 1 },
   { name: 'regoFile', maxCount: 1 },
@@ -79,11 +79,7 @@ app.post('/partner-form', upload.fields([
   }
 });
 
-// ------------------- PART 2: STRIPE & BOOKINGS -------------------
-
-// ------------------- CREATE CHECKOUT SESSION -------------------
-app.use(bodyParser.json()); // standard JSON parser for non-webhook routes
-
+/* ------------------- STRIPE CHECKOUT ------------------- */
 app.post('/create-checkout-session', async (req, res) => {
   const { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes } = req.body;
 
@@ -104,13 +100,7 @@ app.post('/create-checkout-session', async (req, res) => {
         },
         quantity: 1
       }],
-      metadata: {
-        name, email, phone, pickup, dropoff, datetime, vehicleType,
-        totalFare: totalFare.toString(),
-        distanceKm: distanceKm.toString(),
-        durationMin: durationMin.toString(),
-        notes: notes || ''
-      },
+      metadata: { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare: totalFare.toString(), distanceKm: distanceKm.toString(), durationMin: durationMin.toString(), notes: notes || '' },
       success_url: 'https://bookingform-pi.vercel.app/success.html',
       cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
     });
@@ -122,9 +112,8 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// ------------------- STRIPE WEBHOOK -------------------
-// Use raw body for webhook signature verification
-app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+/* ------------------- STRIPE WEBHOOK ------------------- */
+app.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
@@ -135,12 +124,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // Handle checkout completion
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
 
     const booking = {
-      id: Date.now(), // simple unique ID
+      id: Date.now(),
       customername: session.metadata.name,
       customeremail: session.metadata.email,
       customerphone: session.metadata.phone,
@@ -162,7 +150,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       const { data, error } = await supabase.from('pending_jobs').insert([booking]);
       if (error) console.error('Supabase insert error:', error);
 
-      await sendBookingEmail(booking);
+      await sendEmail(booking);
       await sendInvoicePDF(booking, session.id);
     } catch (err) {
       console.error('Webhook insert error:', err);
@@ -172,17 +160,19 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   res.status(200).json({ received: true });
 });
 
-// ------------------- EMAIL & PDF FUNCTIONS -------------------
-async function sendBookingEmail(booking) {
+/* ------------------- EMAIL FUNCTIONS ------------------- */
+async function sendEmail(booking) {
   try {
     await transporter.sendMail({
       from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
       to: process.env.EMAIL_TO,
       subject: `New Booking from ${booking.customername}`,
-      html: `<p>Name: ${booking.customername}</p><p>Pickup: ${booking.pickup}</p><p>Dropoff: ${booking.dropoff}</p>`
+      html: `<p>Name: ${booking.customername}</p>
+             <p>Pickup: ${booking.pickup}</p>
+             <p>Dropoff: ${booking.dropoff}</p>`
     });
   } catch (err) {
-    console.error('Booking email error:', err);
+    console.error('Email error:', err);
   }
 }
 
@@ -194,11 +184,18 @@ async function sendInvoicePDF(booking, sessionId) {
 
     doc.fontSize(20).fillColor('#B9975B').text('CHAUFFEUR DE LUXE', { align: 'center' });
     doc.fontSize(18).fillColor('black').text('Invoice', { align: 'center' });
-    doc.text(`Customer: ${booking.customername}`);
-    doc.text(`Pickup: ${booking.pickup}`);
-    doc.text(`Dropoff: ${booking.dropoff}`);
-    doc.text(`Vehicle: ${booking.vehicletype}`);
-    doc.text(`Fare: $${booking.fare}`);
+    doc.moveDown();
+    doc.fontSize(14).fillColor('black')
+       .text(`Customer: ${booking.customername}`)
+       .text(`Pickup: ${booking.pickup}`)
+       .text(`Dropoff: ${booking.dropoff}`)
+       .text(`Date/Time: ${booking.pickuptime}`)
+       .text(`Vehicle: ${booking.vehicletype}`)
+       .text(`Fare: $${booking.fare.toFixed(2)}`)
+       .text(`Distance: ${booking.distance_km} km`)
+       .text(`Duration: ${booking.duration_min} min`)
+       .text(`Notes: ${booking.notes || 'N/A'}`);
+    
     doc.end();
 
     bufferStream.on('finish', async () => {
@@ -216,9 +213,7 @@ async function sendInvoicePDF(booking, sessionId) {
   }
 }
 
-// ------------------- PART 3: ASSIGN JOB & DRIVER LOGIN -------------------
-
-// ------------------- ASSIGN JOB -------------------
+/* ------------------- ASSIGN JOB ------------------- */
 app.post('/assign-job', async (req, res) => {
   try {
     const { bookingData } = req.body;
@@ -268,7 +263,7 @@ app.post('/assign-job', async (req, res) => {
   }
 });
 
-// ------------------- DRIVER LOGIN -------------------
+/* ------------------- DRIVER LOGIN ------------------- */
 app.post('/driver-login', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
@@ -291,7 +286,7 @@ app.post('/driver-login', async (req, res) => {
   }
 });
 
-// ------------------- CRON JOB FOR DRIVER RENEWALS -------------------
+/* ------------------- CRON JOB FOR DRIVER RENEWALS ------------------- */
 cron.schedule('0 9 * * *', () => {
   const dataPath = path.join(__dirname, 'drivers.json');
   if (!fs.existsSync(dataPath)) return;
@@ -317,6 +312,6 @@ cron.schedule('0 9 * * *', () => {
   });
 });
 
-// ------------------- START SERVER -------------------
+/* ------------------- START SERVER ------------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
