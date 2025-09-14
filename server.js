@@ -106,64 +106,60 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   }
 
   if (event.type === 'checkout.session.completed') {
-  console.log('✅ Payment completed webhook received');
+    console.log('✅ Payment completed webhook received');
 
-  const s = event.data.object;
+    const s = event.data.object;
+    const totalFare = parseFloat(s.metadata.totalFare);
+    const distanceKm = parseFloat(s.metadata.distanceKm) || 0;
+    const durationMin = parseFloat(s.metadata.durationMin) || 0;
+    const datetime = s.metadata.datetime ? new Date(s.metadata.datetime) : new Date();
 
-  // Safely parse metadata
-  const totalFare = parseFloat(s.metadata.totalFare);
-  const distanceKm = parseFloat(s.metadata.distanceKm) || 0;
-  const durationMin = parseFloat(s.metadata.durationMin) || 0;
-  const datetime = s.metadata.datetime ? new Date(s.metadata.datetime) : new Date();
+    const bookingId = Date.now();
+    const booking = {
+      id: bookingId,
+      name: s.metadata.name,
+      email: s.metadata.email,
+      phone: s.metadata.phone,
+      pickup: s.metadata.pickup,
+      dropoff: s.metadata.dropoff,
+      datetime: datetime.toISOString(),
+      vehicleType: s.metadata.vehicleType,
+      totalFare: isNaN(totalFare) ? 0 : totalFare,
+      distanceKm,
+      durationMin,
+      notes: s.metadata.notes || ''
+    };
 
-  const bookingId = Date.now(); // numeric unique ID
+    try {
+      const { data, error } = await supabase.from('pending_jobs').insert([{
+        id: booking.id,
+        customername: booking.name,
+        customeremail: booking.email,
+        customerphone: booking.phone,
+        pickup: booking.pickup,
+        dropoff: booking.dropoff,
+        pickuptime: booking.datetime,
+        vehicletype: booking.vehicleType,
+        fare: booking.totalFare,
+        status: 'pending',
+        createdat: new Date().toISOString(),
+        assignedat: null,
+        assignedto: null
+      }]);
 
-  const booking = {
-    id: bookingId,
-    name: s.metadata.name,
-    email: s.metadata.email,
-    phone: s.metadata.phone,
-    pickup: s.metadata.pickup,
-    dropoff: s.metadata.dropoff,
-    datetime: datetime.toISOString(),
-    vehicleType: s.metadata.vehicleType,
-    totalFare: isNaN(totalFare) ? 0 : totalFare,
-    distanceKm,
-    durationMin,
-    notes: s.metadata.notes || ''
-  };
+      if (error) console.error('❌ Supabase pending_jobs insert error:', error);
+      else console.log('✅ Booking saved to pending_jobs:', data);
 
-  try {
-    const { data, error } = await supabase.from('pending_jobs').insert([{
-      id: booking.id,
-      customername: booking.name,
-      customeremail: booking.email,
-      customerphone: booking.phone,
-      pickup: booking.pickup,
-      dropoff: booking.dropoff,
-      pickuptime: booking.datetime,
-      vehicletype: booking.vehicleType,
-      fare: booking.totalFare,
-      status: 'pending',
-      createdat: new Date().toISOString(),
-      assignedat: null,
-      assignedto: null
-    }]);
+      sendEmail(booking).catch(console.error);
+      sendInvoicePDF(booking, s.id).catch(console.error);
 
-    if (error) {
-      console.error('❌ Supabase pending_jobs insert error:', error);
-    } else {
-      console.log('✅ Booking saved to pending_jobs:', data);
+    } catch (err) {
+      console.error('Unexpected insert error:', err);
     }
-
-    // Send emails / invoice
-    sendEmail(booking).catch(console.error);
-    sendInvoicePDF(booking, s.id).catch(console.error);
-
-  } catch (err) {
-    console.error('Unexpected insert error:', err);
-  }
-  });
+  } // closes if (event.type === ...)
+  
+  res.status(200).json({ received: true }); // respond to Stripe
+}); // closes app.post('/webhook')
 
 /* ------------------- BODY PARSERS ------------------- */
 app.use(bodyParser.json());
