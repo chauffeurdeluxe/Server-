@@ -76,81 +76,148 @@ app.post('/partner-form', upload.fields([
   }
 });
 
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-const bodyParser = require('body-parser');
-const nodemailer = require('nodemailer');
-const path = require('path');
-const multer = require('multer');
-const fs = require('fs');
-const cron = require('node-cron');
-const PDFDocument = require('pdfkit');
-const streamBuffers = require('stream-buffers');
-const { createClient } = require('@supabase/supabase-js');
+/* ------------------- STRIPE CHECKOUT ------------------- */
+app.post('/create-checkout-session', async (req, res) => {
+  const { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes } = req.body;
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+  if (!email || !totalFare || totalFare < 10) {
+    return res.status(400).json({ error: 'Invalid booking data.' });
+  }
 
-const app = express();
-app.use(cors());
-app.use(express.static('public'));
-app.use(bodyParser.json());
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      mode: 'payment',
+      customer_email: email,
+      line_items: [{
+        price_data: {
+          currency: 'aud',
+          product_data: { name: `Chauffeur Booking – ${vehicleType.toUpperCase()}` },
+          unit_amount: Math.round(totalFare * 100)
+        },
+        quantity: 1
+      }],
+      metadata: {
+        name, email, phone, pickup, dropoff,
+        datetime, vehicleType,
+        totalFare: totalFare.toString(),
+        distanceKm: distanceKm.toString(),
+        durationMin: durationMin.toString(),
+        notes: notes || ''
+      },
+      success_url: 'https://bookingform-pi.vercel.app/success.html',
+      cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
+    });
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-});
-
-/* ------------------- MULTER ------------------- */
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadPath = path.join(__dirname, 'uploads');
-    if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath);
-    cb(null, uploadPath);
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
+    res.status(200).json({ id: session.id, url: session.url });
+  } catch (err) {
+    console.error('Stripe checkout error:', err);
+    res.status(500).json({ error: 'Stripe session creation failed.' });
   }
 });
-const upload = multer({ storage });
 
-/* ------------------- PARTNER FORM ------------------- */
-app.post('/partner-form', upload.fields([
-  { name: 'insuranceFile', maxCount: 1 },
-  { name: 'regoFile', maxCount: 1 },
-  { name: 'licenceFile', maxCount: 1 }
-]), async (req, res) => {
+/* ------------------- STRIPE WEBHOOK ------------------- */
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
   try {
-    const data = req.body;
-    const files = req.files;
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('Webhook signature failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
 
-    let drivers = [];
-    const dataPath = path.join(__dirname, 'drivers.json');
-    if (fs.existsSync(dataPath)) drivers = JSON.parse(fs.readFileSync(dataPath));
-    drivers.push({ ...data, files, submittedAt: new Date() });
-    fs.writeFileSync(dataPath, JSON.stringify(drivers, null, 2));
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
 
-    const attachments = [];
-    for (let field in files) {
-      attachments.push({ filename: files[field][0].originalname, path: files[field][0].path });
-    }
+    const booking = {
+      id: Date.now(),
+      customername: session.metadata.name,
+      customeremail: session.metadata.email,
+      customerphone: session.metadata.phone,
+      pickup: session.metadata.pickup,
+      dropoff: session.metadata.dropoff,
+      pickuptime: session.metadata.datetime,
+      vehicletype: session.metadata.vehicleType,
+      fare: parseFloat(session.metadata.totalFare),
+      distance_km: parseFloat(session.metadata.distanceKm),
+      duration_min: parseFloat(session.metadata.durationMin),
+      notes: session.metadata.notes,
+      status: 'pending',
+      createdat: new Date().toISOString(),
+      assignedto: null,
+      assignedat: null
+    };
 
+    try {
+      const { data, error } = await supabase.from('pending_jobs').insert([booking]);
+      if (error) console.error('Supabase insert error:', error);
+
+      await sendEmail(booking);
+      await sendInvoicePDF(booking, session.id);
+    } catch (err) { console.error('Webhook insert error:', err); }
+  }
+
+  res.status(200).json({ received: true });
+});
+
+/* ------------------- EMAIL FUNCTIONS ------------------- */
+async function sendEmail(booking) {
+  try {
     await transporter.sendMail({
       from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
       to: process.env.EMAIL_TO,
-      subject: `New Driver Partner Submission - ${data.fullName}`,
-      html: `<h2>Driver Partner Application</h2><p>Name: ${data.fullName}</p><p>Email: ${data.email}</p>`,
-      attachments
+      subject: `New Booking from ${booking.customername}`,
+      html: `<p>Name: ${booking.customername}</p>
+             <p>Pickup: ${booking.pickup}</p>
+             <p>Dropoff: ${booking.dropoff}</p>`
     });
+  } catch (err) { console.error('Email error:', err); }
+}
 
-    res.status(200).json({ message: 'Form submitted successfully' });
+async function sendInvoicePDF(booking, sessionId) {
+  try {
+    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    const bufferStream = new streamBuffers.WritableStreamBuffer();
+    doc.pipe(bufferStream);
+    doc.fontSize(20).fillColor('#B9975B').text('CHAUFFEUR DE LUXE', { align: 'center' });
+    doc.fontSize(18).fillColor('black').text('Invoice', { align: 'center' });
+    doc.end();
+
+    bufferStream.on('finish', async () => {
+      const pdfBuffer = bufferStream.getContents();
+      await transporter.sendMail({
+        from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+        to: booking.customeremail,
+        subject: 'Your Invoice',
+        text: 'Please find your invoice attached.',
+        attachments: [{ filename: 'invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
+      });
+    });
+  } catch (err) { console.error('Invoice PDF error:', err); }
+}
+
+/* ------------------- GET PENDING & COMPLETED JOBS ------------------- */
+app.get('/pending-jobs', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('pending_jobs').select('*').order('createdat', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   } catch (err) {
-    console.error('Partner form error:', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error('Fetch pending jobs error:', err);
+    res.status(500).json({ error: 'Failed to fetch pending jobs' });
+  }
+});
+
+app.get('/completed-jobs', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('completed_jobs').select('*').order('assignedat', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  } catch (err) {
+    console.error('Fetch completed jobs error:', err);
+    res.status(500).json({ error: 'Failed to fetch completed jobs' });
   }
 });
 
