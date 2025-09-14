@@ -137,7 +137,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
     try {
       // Insert directly into the 'bookings' table your admin page reads
-      const { data, error } = await supabase.from('bookings').insert([booking]);
+      const { data, error } = await supabase.from('pending_jobs').insert([booking]);
 
       if (error) {
         console.error('❌ Supabase insert error:', error);
