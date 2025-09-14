@@ -131,8 +131,8 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   createdat: new Date().toISOString(),
   assignedto: null,
   assignedat: null,
-  distance_km: distanceKm,
-  duration_min: durationMin,
+  distance_km: distancekm,
+  duration_min: durationmin,
   notes: notes
 };
 
