@@ -2,72 +2,159 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-const { createClient } = require('@supabase/supabase-js');
+const bodyParser = require('body-parser');
 const nodemailer = require('nodemailer');
-const cron = require('node-cron');
-const fs = require('fs');
 const path = require('path');
-
-const app = express();
-app.use(cors());
-app.use(express.json());
+const multer = require('multer');
+const fs = require('fs');
+const cron = require('node-cron');
+const PDFDocument = require('pdfkit');
+const streamBuffers = require('stream-buffers');
+const { createClient } = require('@supabase/supabase-js');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// ------------------- EMAIL TRANSPORTER -------------------
+const app = express();
+app.use(cors());
+app.use(express.static('public'));
+app.use(bodyParser.json());
+
 const transporter = nodemailer.createTransport({
   service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
+  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
-// ------------------- PENDING JOBS -------------------
-app.get('/pending-jobs', async (req, res) => {
+/* ------------------- MULTER ------------------- */
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadPath = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath);
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + '-' + file.originalname);
+  }
+});
+const upload = multer({ storage });
+
+/* ------------------- PARTNER FORM ------------------- */
+app.post('/partner-form', upload.fields([
+  { name: 'insuranceFile', maxCount: 1 },
+  { name: 'regoFile', maxCount: 1 },
+  { name: 'licenceFile', maxCount: 1 }
+]), async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('pending_jobs')
-      .select('*')
-      .order('pickuptime', { ascending: true });
-    if (error) throw error;
-    res.json(data || []);
+    const data = req.body;
+    const files = req.files;
+
+    let drivers = [];
+    const dataPath = path.join(__dirname, 'drivers.json');
+    if (fs.existsSync(dataPath)) drivers = JSON.parse(fs.readFileSync(dataPath));
+    drivers.push({ ...data, files, submittedAt: new Date() });
+    fs.writeFileSync(dataPath, JSON.stringify(drivers, null, 2));
+
+    const attachments = [];
+    for (let field in files) {
+      attachments.push({ filename: files[field][0].originalname, path: files[field][0].path });
+    }
+
+    await transporter.sendMail({
+      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_TO,
+      subject: `New Driver Partner Submission - ${data.fullName}`,
+      html: `<h2>Driver Partner Application</h2><p>Name: ${data.fullName}</p><p>Email: ${data.email}</p>`,
+      attachments
+    });
+
+    res.status(200).json({ message: 'Form submitted successfully' });
   } catch (err) {
-    console.error('Error fetching pending jobs:', err);
-    res.status(500).json({ error: 'Failed to fetch pending jobs' });
+    console.error('Partner form error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-// ------------------- COMPLETED JOBS -------------------
-app.get('/completed-jobs', async (req, res) => {
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const bodyParser = require('body-parser');
+const nodemailer = require('nodemailer');
+const path = require('path');
+const multer = require('multer');
+const fs = require('fs');
+const cron = require('node-cron');
+const PDFDocument = require('pdfkit');
+const streamBuffers = require('stream-buffers');
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+const app = express();
+app.use(cors());
+app.use(express.static('public'));
+app.use(bodyParser.json());
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+});
+
+/* ------------------- MULTER ------------------- */
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadPath = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath);
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + '-' + file.originalname);
+  }
+});
+const upload = multer({ storage });
+
+/* ------------------- PARTNER FORM ------------------- */
+app.post('/partner-form', upload.fields([
+  { name: 'insuranceFile', maxCount: 1 },
+  { name: 'regoFile', maxCount: 1 },
+  { name: 'licenceFile', maxCount: 1 }
+]), async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('completed_jobs')
-      .select('*')
-      .order('completedAt', { ascending: false });
-    if (error) throw error;
+    const data = req.body;
+    const files = req.files;
 
-    // Map so admin dashboard can read bookingData + driverEmail
-    const mapped = (data || []).map(job => ({
-      id: job.id,
-      driverEmail: job.driverEmail,
-      bookingData: job.bookingData,
-      driverPay: job.driverPay,
-      assignedAt: job.assignedAt,
-      completedAt: job.completedAt
-    }));
+    let drivers = [];
+    const dataPath = path.join(__dirname, 'drivers.json');
+    if (fs.existsSync(dataPath)) drivers = JSON.parse(fs.readFileSync(dataPath));
+    drivers.push({ ...data, files, submittedAt: new Date() });
+    fs.writeFileSync(dataPath, JSON.stringify(drivers, null, 2));
 
-    res.json(mapped);
+    const attachments = [];
+    for (let field in files) {
+      attachments.push({ filename: files[field][0].originalname, path: files[field][0].path });
+    }
+
+    await transporter.sendMail({
+      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_TO,
+      subject: `New Driver Partner Submission - ${data.fullName}`,
+      html: `<h2>Driver Partner Application</h2><p>Name: ${data.fullName}</p><p>Email: ${data.email}</p>`,
+      attachments
+    });
+
+    res.status(200).json({ message: 'Form submitted successfully' });
   } catch (err) {
-    console.error('Error fetching completed jobs:', err);
-    res.status(500).json({ error: 'Failed to fetch completed jobs' });
+    console.error('Partner form error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-// ------------------- ASSIGN JOB -------------------
+/* ------------------- ASSIGN JOB ------------------- */
 app.post('/assign-job', async (req, res) => {
   try {
     const { bookingData } = req.body;
@@ -82,35 +169,22 @@ app.post('/assign-job', async (req, res) => {
       .eq('id', bookingData.id)
       .single();
 
-    if (fetchError || !pendingData) {
-      console.error('Pending job fetch error:', fetchError);
-      return res.status(404).json({ error: 'Booking not found' });
-    }
+    if (fetchError || !pendingData) return res.status(404).json({ error: 'Booking not found' });
 
-    const driverPay = parseFloat(pendingData.fare) * 0.8;
+    const driverPay = pendingData.fare * 0.8;
 
     // Insert into completed_jobs
     const { error: insertError } = await supabase.from('completed_jobs').insert([{
-      id: pendingData.id,
-      driverEmail: bookingData.assignedto,
-      bookingData: pendingData,
+      ...pendingData,
+      assignedto: bookingData.assignedto,
       driverPay,
-      assignedAt: pendingData.assignedat || new Date().toISOString(),
-      completedAt: new Date().toISOString()
+      assignedat: new Date().toISOString(),
+      status: 'completed'
     }]);
-
-    if (insertError) {
-      console.error('Error inserting completed job:', insertError);
-      return res.status(500).json({ error: 'Error assigning job' });
-    }
+    if (insertError) return res.status(500).json({ error: 'Error assigning job' });
 
     // Delete from pending_jobs
-    const { error: deleteError } = await supabase
-      .from('pending_jobs')
-      .delete()
-      .eq('id', bookingData.id);
-
-    if (deleteError) console.error('Error deleting pending job:', deleteError);
+    await supabase.from('pending_jobs').delete().eq('id', bookingData.id);
 
     // Notify driver via email
     await transporter.sendMail({
@@ -130,21 +204,25 @@ app.post('/assign-job', async (req, res) => {
   }
 });
 
-// ------------------- DRIVER LOGIN -------------------
+/* ------------------- DRIVER LOGIN ------------------- */
 app.post('/driver-login', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
 
   try {
-    const { data: pendingJobs } = await supabase
+    const { data: pendingJobs, error: pendingError } = await supabase
       .from('pending_jobs')
       .select('*')
       .eq('assignedto', email);
 
-    const { data: completedJobs } = await supabase
+    const { data: completedJobs, error: completedError } = await supabase
       .from('completed_jobs')
       .select('*')
-      .eq('driverEmail', email);
+      .ilike('assignedto', email);
+
+    if (pendingError || completedError) {
+      return res.status(500).json({ error: 'Failed to fetch driver jobs' });
+    }
 
     res.json({ jobs: pendingJobs || [], completed: completedJobs || [] });
   } catch (err) {
@@ -153,53 +231,32 @@ app.post('/driver-login', async (req, res) => {
   }
 });
 
-// ------------------- CRON JOB FOR DRIVER RENEWALS -------------------
-cron.schedule('0 9 * * *', async () => {
-  try {
-    const { data: drivers } = await supabase
-      .from('drivers')
-      .select('*');
+/* ------------------- CRON JOB FOR DRIVER RENEWALS ------------------- */
+cron.schedule('0 9 * * *', () => {
+  const dataPath = path.join(__dirname, 'drivers.json');
+  if (!fs.existsSync(dataPath)) return;
 
-    if (!drivers) return;
+  const drivers = JSON.parse(fs.readFileSync(dataPath));
+  const today = new Date();
 
-    const today = new Date();
+  drivers.forEach(driver => {
+    const regoDate = new Date(driver.regoExpiry);
+    const insuranceDate = new Date(driver.insuranceExpiry);
 
-    drivers.forEach(driver => {
-      const regoDate = new Date(driver.regoexpiry);
-      const insuranceDate = new Date(driver.insuranceexpiry);
-
-      [{ type: 'Registration', date: regoDate }, { type: 'Insurance', date: insuranceDate }].forEach(item => {
-        const diffDays = Math.ceil((item.date - today) / (1000 * 60 * 60 * 24));
-        if (diffDays === 30) {
-          transporter.sendMail({
-            from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-            to: process.env.EMAIL_TO,
-            subject: `${item.type} Renewal Reminder - ${driver.name}`,
-            text: `${driver.name}'s ${item.type} expires in 30 days on ${item.date.toDateString()}.`
-          }).catch(console.error);
-        }
-      });
+    [{ type: 'Registration', date: regoDate }, { type: 'Insurance', date: insuranceDate }].forEach(item => {
+      const diffDays = Math.ceil((item.date - today) / (1000 * 60 * 60 * 24));
+      if (diffDays === 30) {
+        transporter.sendMail({
+          from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+          to: process.env.EMAIL_TO,
+          subject: `${item.type} Renewal Reminder - ${driver.fullName}`,
+          text: `${driver.fullName}'s ${item.type} expires in 30 days on ${item.date.toDateString()}.`
+        }).catch(console.error);
+      }
     });
-  } catch (err) {
-    console.error('Driver renewal cron error:', err);
-  }
+  });
 });
 
-// ------------------- STRIPE PAYMENT ENDPOINT -------------------
-app.post('/create-payment-intent', async (req, res) => {
-  const { amount, currency = 'aud' } = req.body;
-  try {
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(amount * 100), // convert to cents
-      currency
-    });
-    res.json({ clientSecret: paymentIntent.client_secret });
-  } catch (err) {
-    console.error('Stripe error:', err);
-    res.status(500).json({ error: 'Payment failed' });
-  }
-});
-
-// ------------------- START SERVER -------------------
+/* ------------------- START SERVER ------------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
