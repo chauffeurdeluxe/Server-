@@ -101,7 +101,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
     console.log('Webhook received:', event.type);
   } catch (err) {
-    console.error('⚠️  Webhook signature verification failed.', err.message);
+    console.error('⚠️ Webhook signature verification failed.', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
@@ -109,57 +109,54 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     console.log('✅ Payment completed webhook received');
 
     const s = event.data.object;
-    const totalFare = parseFloat(s.metadata.totalFare);
+
+    // Parse metadata safely
+    const totalFare = parseFloat(s.metadata.totalFare) || 0;
     const distanceKm = parseFloat(s.metadata.distanceKm) || 0;
     const durationMin = parseFloat(s.metadata.durationMin) || 0;
     const datetime = s.metadata.datetime ? new Date(s.metadata.datetime) : new Date();
 
-    const bookingId = Date.now();
+    const bookingId = Date.now(); // Or use UUID if you prefer
     const booking = {
       id: bookingId,
-      name: s.metadata.name,
-      email: s.metadata.email,
-      phone: s.metadata.phone,
-      pickup: s.metadata.pickup,
-      dropoff: s.metadata.dropoff,
-      datetime: datetime.toISOString(),
-      vehicleType: s.metadata.vehicleType,
-      totalFare: isNaN(totalFare) ? 0 : totalFare,
-      distanceKm,
-      durationMin,
-      notes: s.metadata.notes || ''
+      customername: s.metadata.name || 'Unknown',
+      customeremail: s.metadata.email || '',
+      customerphone: s.metadata.phone || '',
+      pickup: s.metadata.pickup || '',
+      dropoff: s.metadata.dropoff || '',
+      pickuptime: datetime.toISOString(),
+      vehicletype: s.metadata.vehicleType || '',
+      fare: totalFare,
+      distance_km: distanceKm,
+      duration_min: durationMin,
+      notes: s.metadata.notes || '',
+      status: 'pending', // Pending by default
+      createdat: new Date().toISOString(),
+      assignedto: null
     };
 
     try {
-      const { data, error } = await supabase.from('pending_jobs').insert([{
-        id: booking.id,
-        customername: booking.name,
-        customeremail: booking.email,
-        customerphone: booking.phone,
-        pickup: booking.pickup,
-        dropoff: booking.dropoff,
-        pickuptime: booking.datetime,
-        vehicletype: booking.vehicleType,
-        fare: booking.totalFare,
-        status: 'pending',
-        createdat: new Date().toISOString(),
-        assignedat: null,
-        assignedto: null
-      }]);
+      // Insert directly into the 'bookings' table your admin page reads
+      const { data, error } = await supabase.from('bookings').insert([booking]);
 
-      if (error) console.error('❌ Supabase pending_jobs insert error:', error);
-      else console.log('✅ Booking saved to pending_jobs:', data);
+      if (error) {
+        console.error('❌ Supabase insert error:', error);
+      } else {
+        console.log('✅ Booking saved to bookings table:', data);
+      }
 
+      // Optional: send email and PDF invoice
       sendEmail(booking).catch(console.error);
       sendInvoicePDF(booking, s.id).catch(console.error);
 
     } catch (err) {
       console.error('Unexpected insert error:', err);
     }
-  } // closes if (event.type === ...)
-  
-  res.status(200).json({ received: true }); // respond to Stripe
-}); // closes app.post('/webhook')
+  }
+
+  // Respond to Stripe
+  res.status(200).json({ received: true });
+});
 
 /* ------------------- BODY PARSERS ------------------- */
 app.use(bodyParser.json());
