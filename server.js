@@ -321,10 +321,13 @@ function calculateDriverPayout(clientFare) {
 }
 
 app.post('/assign-job', async (req, res) => {
-  const { driverEmail, bookingId } = req.body;
+  try {
+    const { bookingData } = req.body;
 
-  if (!driverEmail || !bookingId)
-    return res.status(400).json({ error: 'Missing driverEmail or bookingId' });
+    const { id, assignedto } = bookingData;
+    if (!id || !assignedto) {
+      return res.status(400).json({ error: 'Missing driver or booking id' });
+    }
 
   try {
     // Fetch the job from pending_jobs
