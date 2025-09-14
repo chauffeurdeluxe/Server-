@@ -312,47 +312,71 @@ function calculateDriverPayout(clientFare) {
   return parseFloat(net.toFixed(2));
 }
 
-app.post('/assign-job', (req, res) => {
-  const { driverEmail, bookingData } = req.body;
-  if (!driverEmail || !bookingData) return res.status(400).json({ error: 'Missing driverEmail or bookingData' });
+app.post('/assign-job', async (req, res) => {
+  const { driverEmail, bookingId } = req.body;
 
-  const jobsFile = path.join(__dirname, 'driver-jobs.json');
-  let jobs = [];
-  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+  if (!driverEmail || !bookingId)
+    return res.status(400).json({ error: 'Missing driverEmail or bookingId' });
 
-  const driverPay = calculateDriverPayout(parseFloat(bookingData.totalFare));
+  try {
+    // Fetch the job from pending_jobs
+    const { data: jobData, error: fetchError } = await supabase
+      .from('pending_jobs')
+      .select('*')
+      .eq('id', bookingId)
+      .single();
 
-  const newJob = {
-    id: bookingData.id,
-    driverEmail,
-    bookingData,
-    driverPay,
-    assignedAt: new Date()
-  };
+    if (fetchError || !jobData) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
 
-  jobs.push(newJob);
-  fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+    if (jobData.status === 'assigned') {
+      return res.status(400).json({ error: 'Job already assigned' });
+    }
 
-  transporter.sendMail({
-    from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-    to: driverEmail,
-    subject: `New Chauffeur Job Assigned`,
-    html: `
-      <h2>You have a new job assigned</h2>
-      <p><strong>Name:</strong> ${bookingData.name}</p>
-      <p><strong>Email:</strong> ${bookingData.email}</p>
-      <p><strong>Phone:</strong> ${bookingData.phone}</p>
-      <p><strong>Pickup:</strong> ${bookingData.pickup}</p>
-      <p><strong>Dropoff:</strong> ${bookingData.dropoff}</p>
-      <p><strong>Pickup Time:</strong> ${bookingData.datetime}</p>
-      <p><strong>Vehicle Type:</strong> ${bookingData.vehicleType}</p>
-      <p><strong>Driver Payout:</strong> $${driverPay}</p>
-      <p><strong>Notes:</strong> ${bookingData.notes || 'None'}</p>
-      <p>Please login to your driver dashboard to view full details.</p>
-    `
-  }).catch(console.error);
+    // Calculate driver pay (optional)
+    const driverPay = jobData.fare ? parseFloat((jobData.fare / 1.45).toFixed(2)) : 0;
 
-  res.json({ message: 'Job assigned successfully', jobId: newJob.id });
+    // Update pending_jobs: assign to driver
+    const { error: updateError } = await supabase
+      .from('pending_jobs')
+      .update({
+        assignedto: driverEmail,
+        assignedat: new Date().toISOString(),
+        status: 'assigned',
+        driverpay: driverPay
+      })
+      .eq('id', bookingId);
+
+    if (updateError) {
+      return res.status(500).json({ error: 'Failed to assign job' });
+    }
+
+    // Send email notification to driver
+    await transporter.sendMail({
+      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+      to: driverEmail,
+      subject: `New Chauffeur Job Assigned`,
+      html: `
+        <h2>You have a new job assigned</h2>
+        <p><strong>Name:</strong> ${jobData.customername}</p>
+        <p><strong>Email:</strong> ${jobData.customeremail}</p>
+        <p><strong>Phone:</strong> ${jobData.customerphone}</p>
+        <p><strong>Pickup:</strong> ${jobData.pickup}</p>
+        <p><strong>Dropoff:</strong> ${jobData.dropoff}</p>
+        <p><strong>Pickup Time:</strong> ${jobData.pickuptime}</p>
+        <p><strong>Vehicle Type:</strong> ${jobData.vehicletype}</p>
+        <p><strong>Driver Payout:</strong> $${driverPay}</p>
+        <p>Please login to your driver dashboard to view full details.</p>
+      `
+    });
+
+    res.json({ message: 'Job assigned successfully', jobId: bookingId });
+
+  } catch (err) {
+    console.error('Assign job error:', err);
+    res.status(500).json({ error: 'Server error assigning job' });
+  }
 });
 
 /* ------------------- PENDING BOOKINGS ROUTE ------------------- */
