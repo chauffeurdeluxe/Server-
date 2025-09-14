@@ -118,7 +118,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
     const bookingId = Date.now(); // Or use UUID if you prefer
     const booking = {
-  id: bookingId,
+   id: bookingId,
   customername: s.metadata.name || 'Unknown',
   customeremail: s.metadata.email || '',
   customerphone: s.metadata.phone || '',
@@ -130,7 +130,10 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   status: 'pending',
   createdat: new Date().toISOString(),
   assignedto: null,
-  assignedat: null
+  assignedat: null,
+  distance_km: distanceKm,
+  duration_min: durationMin,
+  notes: notes
 };
 
     try {
