@@ -10,7 +10,6 @@ const fs = require('fs');
 const cron = require('node-cron');
 const PDFDocument = require('pdfkit');
 const streamBuffers = require('stream-buffers');
-
 const { createClient } = require('@supabase/supabase-js');
 
 const supabase = createClient(
@@ -21,12 +20,12 @@ const supabase = createClient(
 const app = express();
 app.use(cors());
 app.use(express.static('public'));
+app.use(bodyParser.json());
 
-async function saveCompletedJob(job) {
-  const { error } = await supabase.from('completed_jobs').insert([job]);
-  if (error) console.error('Supabase insert error:', error);
-}
-
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+});
 
 /* ------------------- MULTER SETUP ------------------- */
 const storage = multer.diskStorage({
@@ -40,12 +39,6 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage });
-
-/* ------------------- NODEMAILER ------------------- */
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-});
 
 /* ------------------- PARTNER FORM ROUTE ------------------- */
 app.post('/partner-form', upload.fields([
@@ -92,6 +85,60 @@ app.post('/partner-form', upload.fields([
   }
 });
 
+/* ------------------- STRIPE CHECKOUT SESSION ------------------- */
+app.post('/create-checkout-session', async (req, res) => {
+  const {
+    name, email, phone, pickup, dropoff, datetime,
+    vehicleType, totalFare, distanceKm, durationMin,
+    notes, hourlyNotes
+  } = req.body;
+
+  const finalNotes = hourlyNotes || notes || '';
+
+  if (!email || !totalFare || totalFare < 10) {
+    return res.status(400).json({ error: 'Invalid booking data.' });
+  }
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      mode: 'payment',
+      customer_email: email,
+      line_items: [{
+        price_data: {
+          currency: 'aud',
+          product_data: {
+            name: `Chauffeur Booking – ${vehicleType.toUpperCase()}`,
+            description: `Pickup: ${pickup}, Dropoff: ${dropoff}, Time: ${datetime}`
+          },
+          unit_amount: Math.round(totalFare * 100)
+        },
+        quantity: 1
+      }],
+      metadata: {
+        name,
+        email,
+        phone,
+        pickup,
+        dropoff,
+        datetime,
+        vehicleType,
+        totalFare: totalFare.toString(),
+        notes: finalNotes,
+        distanceKm: distanceKm ? distanceKm.toString() : 'N/A',
+        durationMin: durationMin ? durationMin.toString() : 'N/A'
+      },
+      success_url: 'https://bookingform-pi.vercel.app/success.html',
+      cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
+    });
+
+    res.status(200).json({ id: session.id, url: session.url });
+  } catch (err) {
+    console.error('Stripe checkout error:', err);
+    res.status(500).json({ error: 'Stripe session creation failed.' });
+  }
+});
+
 /* ------------------- STRIPE WEBHOOK ------------------- */
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
@@ -101,7 +148,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
     console.log('Webhook received:', event.type);
   } catch (err) {
-    console.error('⚠️ Webhook signature verification failed.', err.message);
+    console.error('⚠️ Webhook signature verification failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
@@ -110,14 +157,13 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
     const session = event.data.object;
 
-    // Safely parse metadata from Stripe
     const totalFare = parseFloat(session.metadata.totalFare) || 0;
     const distanceKm = parseFloat(session.metadata.distanceKm) || 0;
     const durationMin = parseFloat(session.metadata.durationMin) || 0;
     const datetime = session.metadata.datetime ? new Date(session.metadata.datetime) : new Date();
     const notes = session.metadata.notes || '';
 
-    const bookingId = Date.now(); // Or use UUID if preferred
+    const bookingId = Date.now(); // Or UUID
 
     const booking = {
       id: bookingId,
@@ -139,29 +185,20 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     };
 
     try {
-      // Insert booking into pending_jobs table
       const { data, error } = await supabase.from('pending_jobs').insert([booking]);
-      if (error) {
-        console.error('❌ Supabase insert error (pending_jobs):', error);
-      } else {
-        console.log('✅ Booking saved to pending_jobs:', data);
-      }
+      if (error) console.error('❌ Supabase insert error (pending_jobs):', error);
+      else console.log('✅ Booking saved to pending_jobs:', data);
 
-      // Send email and PDF invoice using the same booking object
-      sendEmail(booking).catch(console.error);
-      sendInvoicePDF(booking, session.id).catch(console.error);
-
+      // Send admin email
+      await sendEmail(booking);
+      await sendInvoicePDF(booking, session.id);
     } catch (err) {
       console.error('Unexpected insert error:', err);
     }
   }
 
-  // Always respond to Stripe
   res.status(200).json({ received: true });
 });
-
-/* ------------------- BODY PARSERS ------------------- */
-app.use(bodyParser.json());
 
 /* ------------------- EMAIL & PDF FUNCTIONS ------------------- */
 async function sendEmail(booking) {
@@ -196,43 +233,35 @@ async function sendInvoicePDF(booking, sessionId) {
     const bufferStream = new streamBuffers.WritableStreamBuffer();
     doc.pipe(bufferStream);
 
-    // Header
     doc.fontSize(20).fillColor('#B9975B').text('CHAUFFEUR DE LUXE', { align: 'center' });
     doc.fontSize(12).fillColor('black').text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
     doc.moveDown();
     doc.fontSize(18).fillColor('black').text('Invoice', { align: 'center' });
     doc.moveDown();
 
-    // Invoice info
     doc.fontSize(12)
       .text('Business Name: Chauffeur de Luxe')
-      .text('ABN: ______________________ (to be filled)')
+      .text('ABN: ______________________')
       .moveDown()
       .text(`Invoice Number: ${sessionId}`)
       .text(`Date: ${new Date().toLocaleDateString()}`)
-      .moveDown();
-
-    // Customer info
-    doc.text('Billed To:')
+      .moveDown()
+      .text('Billed To:')
       .text(`Name: ${booking.customername}`)
       .text(`Email: ${booking.customeremail}`)
       .text(`Phone: ${booking.customerphone}`)
-      .moveDown();
-
-    // Booking info
-    doc.text(`Pickup: ${booking.pickup}`)
+      .moveDown()
+      .text(`Pickup: ${booking.pickup}`)
       .text(`Dropoff: ${booking.dropoff}`)
       .text(`Pickup Time: ${booking.pickuptime}`)
       .text(`Vehicle Type: ${booking.vehicletype}`)
-      .moveDown();
-
-    // Fare details
-    doc.text(`Distance: ${booking.distance_km} km`)
+      .moveDown()
+      .text(`Distance: ${booking.distance_km} km`)
       .text(`Estimated Duration: ${booking.duration_min} min`)
       .text(`Notes: ${booking.notes || 'None'}`)
-      .moveDown();
+      .moveDown()
+      .fontSize(14).text(`Total Fare: $${booking.fare}`, { align: 'right' });
 
-    doc.fontSize(14).text(`Total Fare: $${booking.fare}`, { align: 'right' });
     doc.end();
 
     bufferStream.on('finish', async () => {
@@ -250,121 +279,36 @@ async function sendInvoicePDF(booking, sessionId) {
   }
 }
 
-/* ------------------- STRIPE CHECKOUT SESSION ------------------- */
-app.post('/create-checkout-session', async (req, res) => {
-  // accept both notes and hourlyNotes
-  const {
-    name,
-    email,
-    phone,
-    pickup,
-    dropoff,
-    datetime,
-    vehicleType,
-    totalFare,
-    distanceKm,
-    durationMin,
-    notes,
-    hourlyNotes
-  } = req.body;
-
-  // merge them: if hourlyNotes exists, use it, otherwise fall back to notes
-  const finalNotes = hourlyNotes || notes || '';
-
-  if (!email || !totalFare || totalFare < 10) {
-    return res.status(400).json({ error: 'Invalid booking data.' });
-  }
-
-  try {
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      mode: 'payment',
-      customer_email: email,
-      line_items: [{
-        price_data: {
-          currency: 'aud',
-          product_data: {
-            name: `Chauffeur Booking – ${vehicleType.toUpperCase()}`,
-            description: `Pickup: ${pickup}, Dropoff: ${dropoff}, Time: ${datetime}`
-          },
-          unit_amount: Math.round(totalFare * 100)
-        },
-        quantity: 1
-      }],
-      metadata: {
-        name,
-        email,
-        phone,
-        pickup,
-        dropoff,
-        datetime,
-        vehicleType,
-        totalFare: totalFare.toString(),
-        notes: finalNotes,  // ✅ always include notes
-        distanceKm: distanceKm ? distanceKm.toString() : 'N/A',
-        durationMin: durationMin ? durationMin.toString() : 'N/A'
-      },
-      success_url: 'https://bookingform-pi.vercel.app/success.html',
-      cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
-    });
-
-    res.status(200).json({ id: session.id, url: session.url });
-  } catch (err) {
-    res.status(500).json({ error: 'Stripe session creation failed.' });
-  }
-});
-
-/* ------------------- DRIVER JOB LOGIC ------------------- */
-function calculateDriverPayout(clientFare) {
-  const net = clientFare / 1.45;
-  return parseFloat(net.toFixed(2));
-}
-
-// ------------------- ASSIGN JOB -------------------
+/* ------------------- ASSIGN JOB ------------------- */
 app.post('/assign-job', async (req, res) => {
   try {
     const { bookingData } = req.body;
-
-    // ✅ Validation
     const { id, assignedto } = bookingData;
-    if (!id || !assignedto) {
-      return res.status(400).json({ error: 'Missing driver or booking id' });
-    }
 
-    // Calculate driver pay
+    if (!id || !assignedto) return res.status(400).json({ error: 'Missing driver or booking id' });
+
     const driverPay = bookingData.fare ? bookingData.fare * 0.8 : 0;
 
-    // Insert into completed_jobs
     const { error: insertError } = await supabase
       .from('completed_jobs')
-      .insert([
-        {
-          id,
-          bookingData, // keep consistent with other routes
-          driverEmail: assignedto,
-          driverPay,
-          assignedAt: new Date().toISOString(),
-          completedAt: new Date().toISOString()
-        }
-      ]);
+      .insert([{
+        id,
+        bookingData,
+        driverEmail: assignedto,
+        driverPay,
+        assignedAt: new Date().toISOString(),
+        completedAt: null
+      }]);
 
-    if (insertError) {
-      console.error(insertError);
-      return res.status(500).json({ error: 'Error assigning job' });
-    }
+    if (insertError) return res.status(500).json({ error: 'Error assigning job' });
 
-    // Delete from pending_jobs
     const { error: deleteError } = await supabase
       .from('pending_jobs')
       .delete()
       .eq('id', id);
 
-    if (deleteError) {
-      console.error(deleteError);
-      return res.status(500).json({ error: 'Error deleting from pending jobs' });
-    }
+    if (deleteError) return res.status(500).json({ error: 'Error deleting from pending jobs' });
 
-    // ✅ Send email notification to driver
     await transporter.sendMail({
       from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
       to: assignedto,
@@ -372,8 +316,6 @@ app.post('/assign-job', async (req, res) => {
       html: `
         <h2>You have a new job assigned</h2>
         <p><strong>Name:</strong> ${bookingData.customername}</p>
-        <p><strong>Email:</strong> ${bookingData.customeremail}</p>
-        <p><strong>Phone:</strong> ${bookingData.customerphone}</p>
         <p><strong>Pickup:</strong> ${bookingData.pickup}</p>
         <p><strong>Dropoff:</strong> ${bookingData.dropoff}</p>
         <p><strong>Pickup Time:</strong> ${bookingData.pickuptime}</p>
@@ -384,42 +326,14 @@ app.post('/assign-job', async (req, res) => {
 
     res.json({ message: 'Job assigned successfully' });
   } catch (err) {
-    console.error(err);
+    console.error('Assign job error:', err);
     res.status(500).json({ error: 'Server error in /assign-job' });
   }
 });
 
-    // Send email notification to driver
-    await transporter.sendMail({
-      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-      to: driverEmail,
-      subject: `New Chauffeur Job Assigned`,
-      html: `
-        <h2>You have a new job assigned</h2>
-        <p><strong>Name:</strong> ${jobData.customername}</p>
-        <p><strong>Email:</strong> ${jobData.customeremail}</p>
-        <p><strong>Phone:</strong> ${jobData.customerphone}</p>
-        <p><strong>Pickup:</strong> ${jobData.pickup}</p>
-        <p><strong>Dropoff:</strong> ${jobData.dropoff}</p>
-        <p><strong>Pickup Time:</strong> ${jobData.pickuptime}</p>
-        <p><strong>Vehicle Type:</strong> ${jobData.vehicletype}</p>
-        <p><strong>Driver Payout:</strong> $${driverPay}</p>
-        <p>Please login to your driver dashboard to view full details.</p>
-      `
-    });
-
-    res.json({ message: 'Job assigned successfully', jobId: bookingId });
-
-  } catch (err) {
-    console.error('Assign job error:', err);
-    res.status(500).json({ error: 'Server error assigning job' });
-  }
-});
-
-/* ------------------- PENDING JOBS FETCH (Supabase) ------------------- */
+/* ------------------- PENDING JOBS FETCH ------------------- */
 app.get('/pending-jobs', async (req, res) => {
   try {
-    // Fetch only jobs with status = 'pending'
     const { data: pending, error } = await supabase
       .from('pending_jobs')
       .select('*')
@@ -427,7 +341,6 @@ app.get('/pending-jobs', async (req, res) => {
       .order('createdat', { ascending: true });
 
     if (error) throw error;
-
     res.json(pending || []);
   } catch (err) {
     console.error('Pending jobs error:', err);
@@ -435,16 +348,12 @@ app.get('/pending-jobs', async (req, res) => {
   }
 });
 
-// ------------------- COMPLETED JOBS ROUTE -------------------
+/* ------------------- COMPLETED JOBS ------------------- */
 app.get('/completed-jobs', async (req, res) => {
   try {
     const { data, error } = await supabase.from('completed_jobs').select('*');
-    if (error) {
-      console.error('Error fetching completed jobs:', error);
-      return res.status(500).json({ error: 'Failed to fetch completed jobs' });
-    }
+    if (error) throw error;
 
-    // Ensure the structure matches admin HTML expectations
     const formatted = data.map(job => ({
       id: job.id,
       driverEmail: job.driverEmail || '',
@@ -461,7 +370,7 @@ app.get('/completed-jobs', async (req, res) => {
   }
 });
 
-/* ------------------- ADMIN PANEL ------------------- */
+/* ------------------- ADMIN PANEL: DRIVERS ------------------- */
 app.get('/drivers', (req, res) => {
   const dataPath = path.join(__dirname, 'drivers.json');
   if (!fs.existsSync(dataPath)) return res.json([]);
@@ -480,6 +389,7 @@ app.delete('/drivers/:email', (req, res) => {
   res.json({ message: `Driver with email ${email} deleted` });
 });
 
+/* ------------------- ADMIN PANEL: JOBS ------------------- */
 app.get('/jobs', (req, res) => {
   const jobsFile = path.join(__dirname, 'driver-jobs.json');
   if (!fs.existsSync(jobsFile)) return res.json([]);
@@ -495,17 +405,15 @@ app.delete('/jobs/:id', (req, res) => {
   let jobs = JSON.parse(fs.readFileSync(jobsFile));
   jobs = jobs.filter(j => j.id !== jobId);
   fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
-
   res.json({ message: `Job with ID ${jobId} deleted` });
 });
 
-/* ------------------- DRIVER LOGIN (Supabase) ------------------- */
+/* ------------------- DRIVER LOGIN ------------------- */
 app.post('/driver-login', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
 
   try {
-    // Fetch assigned jobs from pending_jobs table
     const { data: assignedJobs, error: assignedError } = await supabase
       .from('pending_jobs')
       .select('*')
@@ -514,7 +422,6 @@ app.post('/driver-login', async (req, res) => {
 
     if (assignedError) throw assignedError;
 
-    // Fetch completed jobs
     const { data: completedJobs, error: completedError } = await supabase
       .from('completed_jobs')
       .select('*')
@@ -523,17 +430,141 @@ app.post('/driver-login', async (req, res) => {
 
     if (completedError) throw completedError;
 
-    res.json({
-      jobs: assignedJobs || [],
-      completed: completedJobs || []
-    });
+    res.json({ jobs: assignedJobs || [], completed: completedJobs || [] });
   } catch (err) {
     console.error('Driver login error:', err);
     res.status(500).json({ error: 'Failed to fetch driver jobs' });
   }
 });
 
-/* ------------------- RENEWAL REMINDERS ------------------- */
+/* ------------------- DRIVER RESPONSE ------------------- */
+app.post('/driver-response', (req, res) => {
+  const { driverEmail, jobId, confirmed } = req.body;
+  if (!driverEmail || !jobId || typeof confirmed !== 'boolean') 
+    return res.status(400).json({ error: 'Missing required fields or invalid data' });
+
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  if (!fs.existsSync(jobsFile)) return res.status(404).json({ error: 'Jobs file not found' });
+
+  let jobs = JSON.parse(fs.readFileSync(jobsFile));
+  const jobIndex = jobs.findIndex(j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase());
+  if (jobIndex === -1) return res.status(404).json({ error: 'Job not found for this driver' });
+
+  const jobData = jobs[jobIndex];
+
+  if (confirmed) {
+    jobs[jobIndex].driverConfirmed = true;
+    jobs[jobIndex].responseAt = new Date();
+  } else {
+    jobs.splice(jobIndex, 1);
+  }
+
+  fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+
+  transporter.sendMail({
+    from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+    to: process.env.EMAIL_TO,
+    subject: `Driver Job Response - ${confirmed ? 'CONFIRMED' : 'REFUSED'} - ${jobId}`,
+    html: `
+      <p>Driver <strong>${driverEmail}</strong> has <strong>${confirmed ? 'CONFIRMED ✅' : 'REFUSED ❌'}</strong> the job.</p>
+      <p><strong>Name:</strong> ${jobData.bookingData.name}</p>
+      <p><strong>Pickup:</strong> ${jobData.bookingData.pickup}</p>
+      <p><strong>Dropoff:</strong> ${jobData.bookingData.dropoff}</p>
+      <p><strong>Pickup Time:</strong> ${jobData.bookingData.datetime}</p>
+      <p><strong>Vehicle Type:</strong> ${jobData.bookingData.vehicleType}</p>
+      <p><strong>Driver Payout:</strong> $${jobData.driverPay.toFixed(2)}</p>
+      <p><strong>Notes:</strong> ${jobData.bookingData.notes || 'None'}</p>
+    `
+  }).catch(console.error);
+
+  res.json({ message: 'Driver response recorded successfully' });
+});
+
+/* ------------------- DRIVER COMPLETE ------------------- */
+app.post('/driver-complete', async (req, res) => {
+  const { driverEmail, jobId } = req.body;
+  if (!driverEmail || !jobId)
+    return res.status(400).json({ error: 'Missing required fields' });
+
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  if (!fs.existsSync(jobsFile))
+    return res.status(404).json({ error: 'Jobs file not found' });
+
+  let jobs = JSON.parse(fs.readFileSync(jobsFile));
+  const jobIndex = jobs.findIndex(
+    j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase()
+  );
+
+  if (jobIndex === -1) return res.status(404).json({ error: 'Job not found for this driver' });
+
+  const jobData = jobs[jobIndex];
+  jobData.completed = true;
+  jobData.completedAt = new Date();
+
+  const jobToInsert = {
+    id: jobData.id,
+    driverEmail: jobData.driverEmail,
+    bookingData: JSON.parse(JSON.stringify(jobData.bookingData)),
+    driverPay: jobData.driverPay,
+    assignedAt: jobData.assignedAt ? new Date(jobData.assignedAt).toISOString() : null,
+    completedAt: jobData.completedAt.toISOString()
+  };
+
+  try {
+    const { error } = await supabase
+      .from('completed_jobs')
+      .upsert([jobToInsert], { onConflict: ['id'] });
+
+    if (error) return res.status(500).json({ error: 'Failed to save completed job' });
+
+    jobs.splice(jobIndex, 1);
+    fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+
+    await transporter.sendMail({
+      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_TO,
+      subject: `Driver Job Completed - ${jobId}`,
+      html: `
+        <p>Driver <strong>${driverEmail}</strong> has <strong>COMPLETED ✅</strong> the job <strong>${jobId}</strong>.</p>
+        <p><strong>Name:</strong> ${jobData.bookingData.name}</p>
+        <p><strong>Pickup:</strong> ${jobData.bookingData.pickup}</p>
+        <p><strong>Dropoff:</strong> ${jobData.bookingData.dropoff}</p>
+        <p><strong>Pickup Time:</strong> ${jobData.bookingData.datetime}</p>
+        <p><strong>Vehicle Type:</strong> ${jobData.bookingData.vehicleType}</p>
+        <p><strong>Driver Payout:</strong> $${jobData.driverPay.toFixed(2)}</p>
+        <p><strong>Notes:</strong> ${jobData.bookingData.notes || 'None'}</p>
+      `
+    });
+
+    res.json({ message: 'Job marked as completed successfully' });
+  } catch (err) {
+    console.error('Unexpected error completing job:', err);
+    res.status(500).json({ error: 'Server error completing job' });
+  }
+});
+
+/* ------------------- DRIVER HISTORY ------------------- */
+app.post('/driver-history', async (req, res) => {
+  const { driverEmail } = req.body;
+  if (!driverEmail) return res.status(400).json({ error: 'Email required' });
+
+  try {
+    const { data, error } = await supabase
+      .from('completed_jobs')
+      .select('*')
+      .ilike('driverEmail', driverEmail)
+      .order('completedAt', { ascending: false });
+
+    if (error) return res.status(500).json({ error: 'Failed to fetch driver history' });
+
+    res.json(data || []);
+  } catch (err) {
+    console.error('Driver history error:', err);
+    res.status(500).json({ error: 'Server error fetching driver history' });
+  }
+});
+
+/* ------------------- RENEWAL REMINDERS (CRON) ------------------- */
 cron.schedule('0 9 * * *', () => {
   const dataPath = path.join(__dirname, 'drivers.json');
   if (!fs.existsSync(dataPath)) return;
@@ -555,162 +586,13 @@ cron.schedule('0 9 * * *', () => {
             subject: `${item.type} Renewal Reminder - ${driver.fullName}`,
             text: `${driver.fullName}'s ${item.type} expires in 30 days on ${item.date.toDateString()}.`
           }).catch(console.error);
-        }
+                  }
       });
   });
 });
 
-/* ------------------- DRIVER RESPONSE ------------------- */
-app.post('/driver-response', (req, res) => {
-  const { driverEmail, jobId, confirmed } = req.body;
-  if (!driverEmail || !jobId || typeof confirmed !== 'boolean') 
-    return res.status(400).json({ error: 'Missing required fields or invalid data' });
-
-  const jobsFile = path.join(__dirname, 'driver-jobs.json');
-  if (!fs.existsSync(jobsFile)) return res.status(404).json({ error: 'Jobs file not found' });
-
-  let jobs = JSON.parse(fs.readFileSync(jobsFile));
-  const jobIndex = jobs.findIndex(j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase());
-  if (jobIndex === -1) return res.status(404).json({ error: 'Job not found for this driver' });
-
-  const jobData = jobs[jobIndex]; // Save job data for email
-
-  if (confirmed) {
-    // CONFIRMED: keep job on driver screen and mark as confirmed
-    jobs[jobIndex].driverConfirmed = true;
-    jobs[jobIndex].responseAt = new Date();
-  } else {
-    // REFUSED: remove job from driver-jobs.json so it can be reassigned
-    jobs.splice(jobIndex, 1);
-  }
-
-  fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
-
-  // Send admin email
-  transporter.sendMail({
-    from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-    to: process.env.EMAIL_TO,
-    subject: `Driver Job Response - ${confirmed ? 'CONFIRMED' : 'REFUSED'} - ${jobId}`,
-    html: `
-      <p>Driver <strong>${driverEmail}</strong> has <strong>${confirmed ? 'CONFIRMED ✅' : 'REFUSED ❌'}</strong> the job.</p>
-      <p><strong>Name:</strong> ${jobData.bookingData.name}</p>
-      <p><strong>Email:</strong> ${jobData.bookingData.email}</p>
-      <p><strong>Phone:</strong> ${jobData.bookingData.phone}</p>
-      <p><strong>Pickup:</strong> ${jobData.bookingData.pickup}</p>
-      <p><strong>Dropoff:</strong> ${jobData.bookingData.dropoff}</p>
-      <p><strong>Pickup Time:</strong> ${jobData.bookingData.datetime}</p>
-      <p><strong>Vehicle Type:</strong> ${jobData.bookingData.vehicleType}</p>
-      <p><strong>Driver Payout:</strong> $${jobData.driverPay.toFixed(2)}</p>
-      <p><strong>Notes:</strong> ${jobData.bookingData.notes || 'None'}</p>
-    `
-  }).catch(console.error);
-
-  res.json({ message: 'Driver response recorded successfully' });
-});
-
-/* ------------------- DRIVER COMPLETE (FIXED) ------------------- */
-app.post('/driver-complete', async (req, res) => {
-  const { driverEmail, jobId } = req.body;
-  if (!driverEmail || !jobId)
-    return res.status(400).json({ error: 'Missing required fields' });
-
-  const jobsFile = path.join(__dirname, 'driver-jobs.json');
-  if (!fs.existsSync(jobsFile))
-    return res.status(404).json({ error: 'Jobs file not found' });
-
-  let jobs = JSON.parse(fs.readFileSync(jobsFile));
-  const jobIndex = jobs.findIndex(
-    j => j.id === jobId && j.driverEmail.toLowerCase() === driverEmail.toLowerCase()
-  );
-
-  if (jobIndex === -1) return res.status(404).json({ error: 'Job not found for this driver' });
-
-  const jobData = jobs[jobIndex];
-  jobData.completed = true;
-  jobData.completedAt = new Date();
-
-  // ------------------- PREPARE SAFE INSERT -------------------
-  const jobToInsert = {
-    id: jobData.id,
-    driverEmail: jobData.driverEmail,
-    bookingData: JSON.parse(JSON.stringify(jobData.bookingData)), // serialize safely
-    driverPay: jobData.driverPay,
-    assignedAt: jobData.assignedAt ? new Date(jobData.assignedAt).toISOString() : null,
-    completedAt: jobData.completedAt.toISOString()
-  };
-
-  console.log('Job to insert:', JSON.stringify(jobToInsert, null, 2));
-
-  try {
-    // Use upsert to avoid duplicate primary key errors
-    const { error } = await supabase
-      .from('completed_jobs')
-      .upsert([jobToInsert], { onConflict: ['id'] });
-
-    if (error) {
-      console.error('Supabase insert/upsert error:', error);
-      return res.status(500).json({ error: 'Failed to save completed job in Supabase' });
-    }
-
-    console.log(`✅ Job ${jobId} saved to completed_jobs successfully.`);
-
-    // Remove from active jobs after successful insert
-    jobs.splice(jobIndex, 1);
-    fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
-    console.log(`✅ Job ${jobId} removed from driver-jobs.json`);
-
-    // Send admin email
-    await transporter.sendMail({
-      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_TO,
-      subject: `Driver Job Completed - ${jobId}`,
-      html: `
-        <p>Driver <strong>${driverEmail}</strong> has <strong>COMPLETED ✅</strong> the job <strong>${jobId}</strong>.</p>
-        <p><strong>Name:</strong> ${jobData.bookingData.name}</p>
-        <p><strong>Email:</strong> ${jobData.bookingData.email}</p>
-        <p><strong>Phone:</strong> ${jobData.bookingData.phone}</p>
-        <p><strong>Pickup:</strong> ${jobData.bookingData.pickup}</p>
-        <p><strong>Dropoff:</strong> ${jobData.bookingData.dropoff}</p>
-        <p><strong>Pickup Time:</strong> ${jobData.bookingData.datetime}</p>
-        <p><strong>Vehicle Type:</strong> ${jobData.bookingData.vehicleType}</p>
-        <p><strong>Driver Payout:</strong> $${jobData.driverPay.toFixed(2)}</p>
-        <p><strong>Notes:</strong> ${jobData.bookingData.notes || 'None'}</p>
-      `
-    });
-
-    res.json({ message: 'Job marked as completed successfully' });
-  } catch (err) {
-    console.error('Unexpected error completing job:', err);
-    res.status(500).json({ error: 'Server error completing job' });
-  }
-});
-
-
-/* ------------------- DRIVER HISTORY ------------------- */
-app.post('/driver-history', async (req, res) => {
-  const { driverEmail } = req.body;
-  if (!driverEmail) return res.status(400).json({ error: 'Email required' });
-
-  try {
-    // Use ilike to allow case-insensitive match if driverEmail casing differs
-    const { data, error } = await supabase
-      .from('completed_jobs')
-      .select('*')
-      .ilike('driverEmail', driverEmail)
-      .order('completedAt', { ascending: false });
-
-    if (error) {
-      console.error('Error fetching driver history:', error);
-      return res.status(500).json({ error: 'Failed to fetch driver history' });
-    }
-
-    res.json(data || []);
-  } catch (err) {
-    console.error('Driver history error:', err);
-    res.status(500).json({ error: 'Server error fetching driver history' });
-  }
-});
-
 /* ------------------- START SERVER ------------------- */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
