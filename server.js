@@ -118,32 +118,30 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
     const bookingId = Date.now(); // Or use UUID if you prefer
     const booking = {
-      id: bookingId,
-      customername: s.metadata.name || 'Unknown',
-      customeremail: s.metadata.email || '',
-      customerphone: s.metadata.phone || '',
-      pickup: s.metadata.pickup || '',
-      dropoff: s.metadata.dropoff || '',
-      pickuptime: datetime.toISOString(),
-      vehicletype: s.metadata.vehicleType || '',
-      fare: totalFare,
-      distance_km: distanceKm,
-      duration_min: durationMin,
-      notes: s.metadata.notes || '',
-      status: 'pending', // Pending by default
-      createdat: new Date().toISOString(),
-      assignedto: null
-    };
+  id: bookingId,
+  customername: s.metadata.name || 'Unknown',
+  customeremail: s.metadata.email || '',
+  customerphone: s.metadata.phone || '',
+  pickup: s.metadata.pickup || '',
+  dropoff: s.metadata.dropoff || '',
+  pickuptime: datetime.toISOString(),
+  vehicletype: s.metadata.vehicleType || '',
+  fare: totalFare,
+  status: 'pending',
+  createdat: new Date().toISOString(),
+  assignedto: null,
+  assignedat: null
+};
 
     try {
       // Insert directly into the 'bookings' table your admin page reads
       const { data, error } = await supabase.from('pending_jobs').insert([booking]);
 
       if (error) {
-        console.error('❌ Supabase insert error:', error);
-      } else {
-        console.log('✅ Booking saved to bookings table:', data);
-      }
+  console.error('❌ Supabase insert error (pending_jobs):', error);
+} else {
+  console.log('✅ Booking saved to pending_jobs table:', data);
+}
 
       // Optional: send email and PDF invoice
       sendEmail(booking).catch(console.error);
