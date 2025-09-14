@@ -131,8 +131,8 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   createdat: new Date().toISOString(),
   assignedto: null,
   assignedat: null,
-  distance_km: distancekm,
-  duration_min: durationmin,
+  distance_km: distanceKm,    // JS variable maps to lowercase DB column
+  duration_min: durationMin,  // JS variable maps to lowercase DB column
   notes: notes
 };
 
