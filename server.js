@@ -379,25 +379,22 @@ app.post('/assign-job', async (req, res) => {
   }
 });
 
-/* ------------------- PENDING BOOKINGS ROUTE ------------------- */
-app.get('/pending-bookings', async (req, res) => {
+/* ------------------- PENDING JOBS FETCH (Supabase) ------------------- */
+app.get('/pending-jobs', async (req, res) => {
   try {
-    // Fetch bookings from Supabase pending_jobs where status = 'pending'
+    // Fetch only jobs with status = 'pending'
     const { data: pending, error } = await supabase
       .from('pending_jobs')
       .select('*')
       .eq('status', 'pending')
       .order('createdat', { ascending: true });
 
-    if (error) {
-      console.error('Error fetching pending jobs:', error);
-      return res.status(500).json({ error: 'Failed to fetch pending jobs' });
-    }
+    if (error) throw error;
 
     res.json(pending || []);
   } catch (err) {
-    console.error('Pending bookings error:', err);
-    res.status(500).json({ error: 'Server error fetching pending bookings' });
+    console.error('Pending jobs error:', err);
+    res.status(500).json({ error: 'Server error fetching pending jobs' });
   }
 });
 
@@ -465,38 +462,38 @@ app.delete('/jobs/:id', (req, res) => {
   res.json({ message: `Job with ID ${jobId} deleted` });
 });
 
-/* ------------------- DRIVER LOGIN ------------------- */
+/* ------------------- DRIVER LOGIN (Supabase) ------------------- */
 app.post('/driver-login', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
 
-  // Paths to files
-  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  try {
+    // Fetch assigned jobs from pending_jobs table
+    const { data: assignedJobs, error: assignedError } = await supabase
+      .from('pending_jobs')
+      .select('*')
+      .eq('assignedto', email)
+      .order('pickuptime', { ascending: true });
 
-  // Read driver-jobs.json
-  let jobs = [];
-  if (fs.existsSync(jobsFile)) {
-    jobs = JSON.parse(fs.readFileSync(jobsFile, 'utf8'));
+    if (assignedError) throw assignedError;
+
+    // Fetch completed jobs
+    const { data: completedJobs, error: completedError } = await supabase
+      .from('completed_jobs')
+      .select('*')
+      .ilike('driverEmail', email)
+      .order('completedAt', { ascending: false });
+
+    if (completedError) throw completedError;
+
+    res.json({
+      jobs: assignedJobs || [],
+      completed: completedJobs || []
+    });
+  } catch (err) {
+    console.error('Driver login error:', err);
+    res.status(500).json({ error: 'Failed to fetch driver jobs' });
   }
-
-  // Filter active jobs for this driver
-  const driverJobs = jobs.filter(job => job.driverEmail?.toLowerCase() === email.toLowerCase());
-
-  // ✅ Fetch completed jobs from Supabase
-  const { data: completedJobs, error } = await supabase
-    .from('completed_jobs')
-    .select('*')
-    .ilike('driverEmail', email);
-
-  if (error) {
-    console.error('Error fetching completed jobs:', error.message);
-    return res.status(500).json({ error: 'Failed to fetch completed jobs' });
-  }
-
-  res.json({
-    jobs: driverJobs,
-    completed: completedJobs || []
-  });
 });
 
 /* ------------------- RENEWAL REMINDERS ------------------- */
