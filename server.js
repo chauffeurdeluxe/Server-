@@ -238,20 +238,25 @@ app.post('/assign-job', async (req, res) => {
 
     if (fetchError || !pendingData) return res.status(404).json({ error: 'Booking not found' });
 
-    const driverPay = pendingData.fare * 0.8;
+    const driverPay = parseFloat(pendingData.fare) * 0.8;
 
-    // Insert into completed_jobs
+    // Insert into completed_jobs aligned with Supabase schema
     const { error: insertError } = await supabase.from('completed_jobs').insert([{
-      ...pendingData,
-      assignedto: bookingData.assignedto,
+      id: pendingData.id,
+      driverEmail: bookingData.assignedto,
+      bookingData: pendingData, // store full pending job as JSON
       driverPay,
-      assignedat: new Date().toISOString(),
-      status: 'completed'
+      assignedAt: new Date().toISOString(),
+      completedAt: null
     }]);
     if (insertError) return res.status(500).json({ error: 'Error assigning job' });
 
     // Delete from pending_jobs
-    await supabase.from('pending_jobs').delete().eq('id', bookingData.id);
+    const { error: deleteError } = await supabase
+      .from('pending_jobs')
+      .delete()
+      .eq('id', bookingData.id);
+    if (deleteError) console.warn('Failed to delete from pending_jobs:', deleteError);
 
     // Notify driver via email
     await transporter.sendMail({
