@@ -108,54 +108,55 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   if (event.type === 'checkout.session.completed') {
     console.log('✅ Payment completed webhook received');
 
-    const s = event.data.object;
+    const session = event.data.object;
 
-    // Parse metadata safely
-    const totalFare = parseFloat(s.metadata.totalFare) || 0;
-    const distanceKm = parseFloat(s.metadata.distanceKm) || 0;
-    const durationMin = parseFloat(s.metadata.durationMin) || 0;
-    const datetime = s.metadata.datetime ? new Date(s.metadata.datetime) : new Date();
+    // Safely parse metadata from Stripe
+    const totalFare = parseFloat(session.metadata.totalFare) || 0;
+    const distanceKm = parseFloat(session.metadata.distanceKm) || 0;
+    const durationMin = parseFloat(session.metadata.durationMin) || 0;
+    const datetime = session.metadata.datetime ? new Date(session.metadata.datetime) : new Date();
+    const notes = session.metadata.notes || '';
 
-    const bookingId = Date.now(); // Or use UUID if you prefer
+    const bookingId = Date.now(); // Or use UUID if preferred
+
     const booking = {
-   id: bookingId,
-  customername: s.metadata.name || 'Unknown',
-  customeremail: s.metadata.email || '',
-  customerphone: s.metadata.phone || '',
-  pickup: s.metadata.pickup || '',
-  dropoff: s.metadata.dropoff || '',
-  pickuptime: datetime.toISOString(),
-  vehicletype: s.metadata.vehicleType || '',
-  fare: totalFare,
-  status: 'pending',
-  createdat: new Date().toISOString(),
-  assignedto: null,
-  assignedat: null,
-  distance_km: distanceKm,    // JS variable maps to lowercase DB column
-  duration_min: durationMin,  // JS variable maps to lowercase DB column
-  notes: notes
-};
+      id: bookingId,
+      customername: session.metadata.name || 'Unknown',
+      customeremail: session.metadata.email || '',
+      customerphone: session.metadata.phone || '',
+      pickup: session.metadata.pickup || '',
+      dropoff: session.metadata.dropoff || '',
+      pickuptime: datetime.toISOString(),
+      vehicletype: session.metadata.vehicleType || '',
+      fare: totalFare,
+      distance_km: distanceKm,
+      duration_min: durationMin,
+      notes: notes,
+      status: 'pending',
+      createdat: new Date().toISOString(),
+      assignedto: null,
+      assignedat: null
+    };
 
     try {
-      // Insert directly into the 'bookings' table your admin page reads
+      // Insert booking into pending_jobs table
       const { data, error } = await supabase.from('pending_jobs').insert([booking]);
-
       if (error) {
-  console.error('❌ Supabase insert error (pending_jobs):', error);
-} else {
-  console.log('✅ Booking saved to pending_jobs table:', data);
-}
+        console.error('❌ Supabase insert error (pending_jobs):', error);
+      } else {
+        console.log('✅ Booking saved to pending_jobs:', data);
+      }
 
-      // Optional: send email and PDF invoice
+      // Send email and PDF invoice using the same booking object
       sendEmail(booking).catch(console.error);
-      sendInvoicePDF(booking, s.id).catch(console.error);
+      sendInvoicePDF(booking, session.id).catch(console.error);
 
     } catch (err) {
       console.error('Unexpected insert error:', err);
     }
   }
 
-  // Respond to Stripe
+  // Always respond to Stripe
   res.status(200).json({ received: true });
 });
 
@@ -168,23 +169,25 @@ async function sendEmail(booking) {
     await transporter.sendMail({
       from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
       to: process.env.EMAIL_TO,
-      subject: `New Booking from ${booking.name}`,
+      subject: `New Booking from ${booking.customername}`,
       html: `
         <h2>New Chauffeur Booking</h2>
-        <p><strong>Name:</strong> ${booking.name}</p>
-        <p><strong>Email:</strong> ${booking.email}</p>
-        <p><strong>Phone:</strong> ${booking.phone}</p>
+        <p><strong>Name:</strong> ${booking.customername}</p>
+        <p><strong>Email:</strong> ${booking.customeremail}</p>
+        <p><strong>Phone:</strong> ${booking.customerphone}</p>
         <p><strong>Pickup:</strong> ${booking.pickup}</p>
         <p><strong>Dropoff:</strong> ${booking.dropoff}</p>
-        <p><strong>Pickup Time:</strong> ${booking.datetime}</p>
-        <p><strong>Vehicle Type:</strong> ${booking.vehicleType}</p>
-        <p><strong>Total Fare:</strong> $${booking.totalFare}</p>
-        <p><strong>Distance:</strong> ${booking.distanceKm} km</p>
-        <p><strong>Estimated Time:</strong> ${booking.durationMin} min</p>
+        <p><strong>Pickup Time:</strong> ${booking.pickuptime}</p>
+        <p><strong>Vehicle Type:</strong> ${booking.vehicletype}</p>
+        <p><strong>Total Fare:</strong> $${booking.fare}</p>
+        <p><strong>Distance:</strong> ${booking.distance_km} km</p>
+        <p><strong>Estimated Time:</strong> ${booking.duration_min} min</p>
         <p><strong>Notes:</strong> ${booking.notes || 'None'}</p>
       `
     });
-  } catch (err) { console.error('Email error:', err); }
+  } catch (err) {
+    console.error('Email error:', err);
+  }
 }
 
 async function sendInvoicePDF(booking, sessionId) {
@@ -193,46 +196,50 @@ async function sendInvoicePDF(booking, sessionId) {
     const bufferStream = new streamBuffers.WritableStreamBuffer();
     doc.pipe(bufferStream);
 
+    // Header
     doc.fontSize(20).fillColor('#B9975B').text('CHAUFFEUR DE LUXE', { align: 'center' });
     doc.fontSize(12).fillColor('black').text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
     doc.moveDown();
     doc.fontSize(18).fillColor('black').text('Invoice', { align: 'center' });
     doc.moveDown();
 
+    // Invoice info
     doc.fontSize(12)
       .text('Business Name: Chauffeur de Luxe')
       .text('ABN: ______________________ (to be filled)')
-      .moveDown();
-
-    doc.text(`Invoice Number: ${sessionId}`)
+      .moveDown()
+      .text(`Invoice Number: ${sessionId}`)
       .text(`Date: ${new Date().toLocaleDateString()}`)
       .moveDown();
 
+    // Customer info
     doc.text('Billed To:')
-      .text(`Name: ${booking.name}`)
-      .text(`Email: ${booking.email}`)
-      .text(`Phone: ${booking.phone}`)
+      .text(`Name: ${booking.customername}`)
+      .text(`Email: ${booking.customeremail}`)
+      .text(`Phone: ${booking.customerphone}`)
       .moveDown();
 
+    // Booking info
     doc.text(`Pickup: ${booking.pickup}`)
       .text(`Dropoff: ${booking.dropoff}`)
-      .text(`Pickup Time: ${booking.datetime}`)
-      .text(`Vehicle Type: ${booking.vehicleType}`)
+      .text(`Pickup Time: ${booking.pickuptime}`)
+      .text(`Vehicle Type: ${booking.vehicletype}`)
       .moveDown();
 
-    doc.text(`Distance: ${booking.distanceKm} km`)
-      .text(`Estimated Duration: ${booking.durationMin} min`)
+    // Fare details
+    doc.text(`Distance: ${booking.distance_km} km`)
+      .text(`Estimated Duration: ${booking.duration_min} min`)
       .text(`Notes: ${booking.notes || 'None'}`)
       .moveDown();
 
-    doc.fontSize(14).text(`Total Fare: $${booking.totalFare}`, { align: 'right' });
+    doc.fontSize(14).text(`Total Fare: $${booking.fare}`, { align: 'right' });
     doc.end();
 
     bufferStream.on('finish', async () => {
       const pdfBuffer = bufferStream.getContents();
       await transporter.sendMail({
         from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-        to: booking.email,
+        to: booking.customeremail,
         subject: 'Your Chauffeur de Luxe Invoice',
         text: 'Please find your invoice attached.',
         attachments: [{ filename: 'invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
