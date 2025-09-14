@@ -163,7 +163,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   } catch (err) {
     console.error('Unexpected insert error:', err);
   }
-}
+  });
 
 /* ------------------- BODY PARSERS ------------------- */
 app.use(bodyParser.json());
