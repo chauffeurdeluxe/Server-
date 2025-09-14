@@ -97,14 +97,7 @@ app.post('/create-checkout-session', async (req, res) => {
         },
         quantity: 1
       }],
-      metadata: {
-        name, email, phone, pickup, dropoff,
-        datetime, vehicleType,
-        totalFare: totalFare.toString(),
-        distanceKm: distanceKm.toString(),
-        durationMin: durationMin.toString(),
-        notes: notes || ''
-      },
+      metadata: { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare: totalFare.toString(), distanceKm: distanceKm.toString(), durationMin: durationMin.toString(), notes: notes || '' },
       success_url: 'https://bookingform-pi.vercel.app/success.html',
       cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
     });
@@ -169,9 +162,7 @@ async function sendEmail(booking) {
       from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
       to: process.env.EMAIL_TO,
       subject: `New Booking from ${booking.customername}`,
-      html: `<p>Name: ${booking.customername}</p>
-             <p>Pickup: ${booking.pickup}</p>
-             <p>Dropoff: ${booking.dropoff}</p>`
+      html: `<p>Name: ${booking.customername}</p><p>Pickup: ${booking.pickup}</p><p>Dropoff: ${booking.dropoff}</p>`
     });
   } catch (err) { console.error('Email error:', err); }
 }
@@ -198,30 +189,9 @@ async function sendInvoicePDF(booking, sessionId) {
   } catch (err) { console.error('Invoice PDF error:', err); }
 }
 
-/* ------------------- GET PENDING & COMPLETED JOBS ------------------- */
-app.get('/pending-jobs', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('pending_jobs').select('*').order('createdat', { ascending: false });
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
-  } catch (err) {
-    console.error('Fetch pending jobs error:', err);
-    res.status(500).json({ error: 'Failed to fetch pending jobs' });
-  }
-});
+// ------------------- PART 2: ASSIGN JOB, DRIVER LOGIN & COMPLETED JOBS -------------------
 
-app.get('/completed-jobs', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('completed_jobs').select('*').order('assignedat', { ascending: false });
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
-  } catch (err) {
-    console.error('Fetch completed jobs error:', err);
-    res.status(500).json({ error: 'Failed to fetch completed jobs' });
-  }
-});
-
-/* ------------------- ASSIGN JOB ------------------- */
+// ------------------- ASSIGN JOB -------------------
 app.post('/assign-job', async (req, res) => {
   try {
     const { bookingData } = req.body;
@@ -271,25 +241,21 @@ app.post('/assign-job', async (req, res) => {
   }
 });
 
-/* ------------------- DRIVER LOGIN ------------------- */
+// ------------------- DRIVER LOGIN -------------------
 app.post('/driver-login', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
 
   try {
-    const { data: pendingJobs, error: pendingError } = await supabase
+    const { data: pendingJobs } = await supabase
       .from('pending_jobs')
       .select('*')
       .eq('assignedto', email);
 
-    const { data: completedJobs, error: completedError } = await supabase
+    const { data: completedJobs } = await supabase
       .from('completed_jobs')
       .select('*')
-      .ilike('assignedto', email);
-
-    if (pendingError || completedError) {
-      return res.status(500).json({ error: 'Failed to fetch driver jobs' });
-    }
+      .eq('assignedto', email);
 
     res.json({ jobs: pendingJobs || [], completed: completedJobs || [] });
   } catch (err) {
@@ -298,7 +264,33 @@ app.post('/driver-login', async (req, res) => {
   }
 });
 
-/* ------------------- CRON JOB FOR DRIVER RENEWALS ------------------- */
+// ------------------- GET PENDING JOBS -------------------
+app.get('/pending-jobs', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('pending_jobs').select('*').order('createdat', { ascending: false });
+    if (error) return res.status(500).json({ error: 'Failed to fetch pending jobs' });
+    res.json(data);
+  } catch (err) {
+    console.error('Pending jobs error:', err);
+    res.status(500).json({ error: 'Server error fetching pending jobs' });
+  }
+});
+
+// ------------------- GET COMPLETED JOBS -------------------
+app.get('/completed-jobs', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('completed_jobs').select('*').order('assignedat', { ascending: false });
+    if (error) return res.status(500).json({ error: 'Failed to fetch completed jobs' });
+    res.json(data);
+  } catch (err) {
+    console.error('Completed jobs error:', err);
+    res.status(500).json({ error: 'Server error fetching completed jobs' });
+  }
+});
+
+// ------------------- PART 3: DRIVER RENEWALS CRON & SERVER START -------------------
+
+// ------------------- CRON JOB FOR DRIVER RENEWALS -------------------
 cron.schedule('0 9 * * *', () => {
   const dataPath = path.join(__dirname, 'drivers.json');
   if (!fs.existsSync(dataPath)) return;
@@ -324,6 +316,6 @@ cron.schedule('0 9 * * *', () => {
   });
 });
 
-/* ------------------- START SERVER ------------------- */
+// ------------------- START SERVER -------------------
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
