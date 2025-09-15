@@ -7,7 +7,6 @@ const nodemailer = require('nodemailer');
 const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
-const cron = require('node-cron');
 const PDFDocument = require('pdfkit');
 const streamBuffers = require('stream-buffers');
 const { createClient } = require('@supabase/supabase-js');
@@ -50,12 +49,7 @@ app.post('/partner-form', upload.fields([
     const data = req.body;
     const files = req.files;
 
-    let drivers = [];
-    const dataPath = path.join(__dirname, 'drivers.json');
-    if (fs.existsSync(dataPath)) drivers = JSON.parse(fs.readFileSync(dataPath));
-    drivers.push({ ...data, files, submittedAt: new Date() });
-    fs.writeFileSync(dataPath, JSON.stringify(drivers, null, 2));
-
+    // Save attachments
     const attachments = [];
     for (let field in files) {
       attachments.push({ filename: files[field][0].originalname, path: files[field][0].path });
@@ -201,7 +195,11 @@ async function sendInvoicePDF(booking, sessionId) {
 /* ------------------- GET PENDING & COMPLETED JOBS ------------------- */
 app.get('/pending-jobs', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('pending_jobs').select('*').order('createdat', { ascending: false });
+    const { data, error } = await supabase
+      .from('pending_jobs')
+      .select('*')
+      .order('createdat', { ascending: false });
+
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
   } catch (err) {
@@ -212,7 +210,11 @@ app.get('/pending-jobs', async (req, res) => {
 
 app.get('/completed-jobs', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('completed_jobs').select('*').order('assignedat', { ascending: false });
+    const { data, error } = await supabase
+      .from('completed_jobs')
+      .select('*')
+      .order('assignedat', { ascending: false });
+
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
   } catch (err) {
@@ -221,6 +223,7 @@ app.get('/completed-jobs', async (req, res) => {
   }
 });
 
+/* ------------------- ASSIGN / CONFIRM JOB ------------------- */
 app.post('/assign-job', async (req, res) => {
   try {
     const { bookingData } = req.body;
@@ -239,7 +242,7 @@ app.post('/assign-job', async (req, res) => {
 
     const driverPay = pendingData.fare * 0.8;
 
-    // Insert into completed_jobs using structured columns
+    // Move job to completed_jobs table
     const { error: insertError } = await supabase.from('completed_jobs').insert([{
       id: pendingData.id,
       customername: pendingData.customername,
@@ -285,6 +288,7 @@ app.post('/assign-job', async (req, res) => {
   }
 });
 
+/* ------------------- DRIVER LOGIN ------------------- */
 app.post('/driver-login', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
