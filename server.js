@@ -135,7 +135,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     // ------------------- INSERT PENDING BOOKING INTO SUPABASE -------------------
 try {
   const { data: pendingData, error: pendingError } = await supabase
-    .from('pending_bookings')
+    .from('pending_jobs')
     .insert([{
       id: booking.id,
       name: booking.name,
