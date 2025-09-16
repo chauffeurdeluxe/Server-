@@ -543,6 +543,26 @@ app.post('/complete-job', async (req, res) => {
   }
 });
 
+// ------------------- GET COMPLETED JOBS -------------------
+app.get('/completed-jobs', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('completed_jobs')
+      .select('*')
+      .order('completedAt', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching completed jobs from Supabase:', error);
+      return res.status(500).json({ error: 'Failed to fetch completed jobs' });
+    }
+
+    res.json(data);
+  } catch (err) {
+    console.error('Server error fetching completed jobs:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 /* ------------------- START SERVER ------------------- */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
