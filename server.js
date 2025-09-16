@@ -158,30 +158,31 @@ try {
   console.error('Error inserting pending booking into Supabase:', err);
 }
 
-    // Add booking to Supabase pending table
+// ------------------- INSERT INTO SUPABASE pending_jobs -------------------
 try {
   const { data: pendingData, error: pendingError } = await supabase
-    .from('pending_jobs')      // <-- replace with your actual pending table name
+    .from('pending_jobs')
     .insert([{
       id: booking.id,
-      name: booking.name,
-      email: booking.email,
-      phone: booking.phone,
+      customername: booking.name,
+      customeremail: booking.email,
+      customerphone: booking.phone,
       pickup: booking.pickup,
       dropoff: booking.dropoff,
-      datetime: booking.datetime,
-      vehicleType: booking.vehicleType,
-      totalFare: booking.totalFare,
-      distanceKm: booking.distanceKm,
-      durationMin: booking.durationMin,
-      notes: booking.notes || '',
-      created_at: new Date()
+      pickuptime: booking.datetime,
+      vehicletype: booking.vehicleType,
+      fare: booking.totalFare,
+      status: 'pending',
+      createdat: new Date(),
+      distance_km: booking.distanceKm,
+      duration_min: booking.durationMin,
+      notes: booking.notes || ''
     }]);
 
-  if (pendingError) console.error('Supabase pending insert error:', pendingError);
-  else console.log('✅ Booking added to Supabase pending_bookings:', booking.id);
+  if (pendingError) console.error('Supabase pending_jobs insert error:', pendingError);
+  else console.log('✅ Pending booking inserted into Supabase:', booking.id);
 } catch (err) {
-  console.error('Supabase pending insert exception:', err);
+  console.error('Error inserting pending booking into Supabase:', err);
 }
 
     // Add to driver jobs
