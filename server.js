@@ -161,7 +161,7 @@ try {
     // Add booking to Supabase pending table
 try {
   const { data: pendingData, error: pendingError } = await supabase
-    .from('pending_bookings')      // <-- replace with your actual pending table name
+    .from('pending_jobs')      // <-- replace with your actual pending table name
     .insert([{
       id: booking.id,
       name: booking.name,
@@ -410,10 +410,7 @@ app.post('/assign-job', (req, res) => {
 /* ------------------- PENDING BOOKINGS ROUTE ------------------- */
 app.get('/pending-bookings', async (req, res) => {
   try {
-    const bookingsFile = path.join(__dirname, 'bookings.json');
-    let bookings = [];
-    if (fs.existsSync(bookingsFile)) bookings = JSON.parse(fs.readFileSync(bookingsFile));
-
+    // Get assigned jobs from driver-jobs.json (still local)
     const jobsFile = path.join(__dirname, 'driver-jobs.json');
     let jobs = [];
     if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
@@ -422,15 +419,19 @@ app.get('/pending-bookings', async (req, res) => {
       .filter(j => j.driverEmail && j.driverEmail.trim() !== '')
       .map(j => j.bookingData.id.toString());
 
-    const { data: completed, error } = await supabase.from('completed_jobs').select('id');
-    if (error) {
-      console.error('Error fetching completed jobs:', error);
-      return res.status(500).json({ error: 'Failed to fetch completed jobs' });
-    }
-    const completedBookingIds = (completed || []).map(c => c.id.toString());
+    // Fetch pending bookings from Supabase
+    const { data: pendingData, error: pendingError } = await supabase
+      .from('pending_jobs')
+      .select('*');
 
-    const pending = bookings.filter(
-      b => !assignedBookingIds.includes(b.id.toString()) && !completedBookingIds.includes(b.id.toString())
+    if (pendingError) {
+      console.error('Supabase fetch pending bookings error:', pendingError);
+      return res.status(500).json({ error: 'Failed to fetch pending bookings' });
+    }
+
+    // Filter out any bookings that have been assigned
+    const pending = (pendingData || []).filter(
+      b => !assignedBookingIds.includes(b.id.toString())
     );
 
     res.json(pending);
