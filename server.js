@@ -418,6 +418,37 @@ app.get('/pending-bookings', async (req, res) => {
   }
 });
 
+/* ------------------- DRIVER SET PASSWORD / RESET ------------------- */
+app.post('/driver-set-password', async (req, res) => {
+  const { email, newPassword } = req.body;
+
+  if (!email || !newPassword) {
+    return res.status(400).json({ error: 'Email and new password required' });
+  }
+
+  try {
+    // Hash the password
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+    // Update driver record
+    const { data, error } = await supabase
+      .from('drivers')
+      .update({ passwordhash: hashedPassword })
+      .eq('email', email);
+
+    if (error) {
+      console.error('Supabase update password error:', error);
+      return res.status(500).json({ error: 'Failed to set password' });
+    }
+
+    res.json({ success: true, message: 'Password set successfully' });
+  } catch (err) {
+    console.error('Driver set password error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ------------------- DRIVER LOGIN -------------------
 app.post('/driver-login', async (req, res) => {
   const { email, password } = req.body;
