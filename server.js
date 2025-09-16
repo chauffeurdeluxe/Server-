@@ -132,6 +132,32 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
     console.log('✅ Booking saved:', booking.id);
 
+    // ------------------- INSERT PENDING BOOKING INTO SUPABASE -------------------
+try {
+  const { data: pendingData, error: pendingError } = await supabase
+    .from('pending_bookings')
+    .insert([{
+      id: booking.id,
+      name: booking.name,
+      email: booking.email,
+      phone: booking.phone,
+      pickup: booking.pickup,
+      dropoff: booking.dropoff,
+      datetime: booking.datetime,
+      vehicleType: booking.vehicleType,
+      totalFare: booking.totalFare,
+      distanceKm: booking.distanceKm,
+      durationMin: booking.durationMin,
+      notes: booking.notes,
+      createdAt: new Date()
+    }]);
+
+  if (pendingError) console.error('Supabase insert pending booking error:', pendingError);
+  else console.log('✅ Pending booking inserted into Supabase:', booking.id);
+} catch (err) {
+  console.error('Error inserting pending booking into Supabase:', err);
+}
+
     // Add booking to Supabase pending table
 try {
   const { data: pendingData, error: pendingError } = await supabase
