@@ -480,6 +480,41 @@ app.post('/driver-login', async (req, res) => {
   }
 });
 
+app.get('/driver-jobs', async (req, res) => {
+  const { email } = req.query;
+  if (!email) return res.status(400).json({ error: 'Missing driver email' });
+
+  try {
+    // Load jobs from Supabase pending_jobs assigned to this driver
+    const { data: jobs, error } = await supabase
+      .from('pending_jobs')
+      .select('*')
+      .eq('driverEmail', email);
+
+    if (error) {
+      console.error('Supabase fetch driver jobs error:', error);
+      return res.status(500).json({ error: 'Failed to fetch jobs' });
+    }
+
+    // Also get completed jobs
+    const { data: completedJobs, error: completedError } = await supabase
+      .from('completed_jobs')
+      .select('*')
+      .eq('driverEmail', email)
+      .order('completedAt', { ascending: false });
+
+    if (completedError) {
+      console.error('Supabase fetch completed jobs error:', completedError);
+      return res.status(500).json({ error: 'Failed to fetch completed jobs' });
+    }
+
+    res.json({ assignedJobs: jobs || [], completedJobs: completedJobs || [] });
+  } catch (err) {
+    console.error('Driver jobs fetch error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 
 /* ------------------- COMPLETE JOB ROUTE ------------------- */
 app.post('/complete-job', async (req, res) => {
