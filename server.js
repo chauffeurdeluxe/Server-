@@ -7,10 +7,11 @@ const nodemailer = require('nodemailer');
 const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
+const cron = require('node-cron');
 const PDFDocument = require('pdfkit');
 const streamBuffers = require('stream-buffers');
+
 const { createClient } = require('@supabase/supabase-js');
-const cron = require('node-cron');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -20,14 +21,14 @@ const supabase = createClient(
 const app = express();
 app.use(cors());
 app.use(express.static('public'));
-app.use(bodyParser.json());
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-});
+/* ------------------- HELPER: SAVE COMPLETED JOB ------------------- */
+async function saveCompletedJob(job) {
+  const { error } = await supabase.from('completed_jobs').insert([job]);
+  if (error) console.error('Supabase insert error:', error);
+}
 
-/* ------------------- MULTER ------------------- */
+/* ------------------- MULTER SETUP ------------------- */
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadPath = path.join(__dirname, 'uploads');
@@ -40,7 +41,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-/* ------------------- PARTNER FORM ------------------- */
+/* ------------------- NODEMAILER ------------------- */
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+});
+
+/* ------------------- PARTNER FORM ROUTE ------------------- */
 app.post('/partner-form', upload.fields([
   { name: 'insuranceFile', maxCount: 1 },
   { name: 'regoFile', maxCount: 1 },
@@ -50,17 +57,31 @@ app.post('/partner-form', upload.fields([
     const data = req.body;
     const files = req.files;
 
-    // Save attachments
+    let drivers = [];
+    const dataPath = path.join(__dirname, 'drivers.json');
+    if (fs.existsSync(dataPath)) drivers = JSON.parse(fs.readFileSync(dataPath));
+    const driverRecord = { ...data, files, submittedAt: new Date() };
+    drivers.push(driverRecord);
+    fs.writeFileSync(dataPath, JSON.stringify(drivers, null, 2));
+
     const attachments = [];
     for (let field in files) {
       attachments.push({ filename: files[field][0].originalname, path: files[field][0].path });
     }
-
     await transporter.sendMail({
       from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
       to: process.env.EMAIL_TO,
       subject: `New Driver Partner Submission - ${data.fullName}`,
-      html: `<h2>Driver Partner Application</h2><p>Name: ${data.fullName}</p><p>Email: ${data.email}</p>`,
+      html: `
+        <h2>Driver Partner Application</h2>
+        <p><strong>Company:</strong> ${data.companyName}</p>
+        <p><strong>Name:</strong> ${data.fullName}</p>
+        <p><strong>Email:</strong> ${data.email}</p>
+        <p><strong>Phone:</strong> ${data.phone}</p>
+        <p><strong>Car:</strong> ${data.carMake} ${data.carModel} (${data.carYear})</p>
+        <p><strong>Registration Expiry:</strong> ${data.regoExpiry}</p>
+        <p><strong>Insurance Expiry:</strong> ${data.insuranceExpiry}</p>
+      `,
       attachments
     });
 
@@ -71,9 +92,176 @@ app.post('/partner-form', upload.fields([
   }
 });
 
-/* ------------------- STRIPE CHECKOUT ------------------- */
+/* ------------------- STRIPE WEBHOOK ------------------- */
+app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    console.log('Webhook received:', event.type);
+  } catch (err) {
+    console.error('⚠️  Webhook signature verification failed.', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    console.log('✅ Payment completed webhook received');
+
+    const s = event.data.object;
+    const bookingId = Date.now().toString();
+
+    const booking = {
+      id: bookingId,
+      name: s.metadata.name,
+      email: s.metadata.email,
+      phone: s.metadata.phone,
+      pickup: s.metadata.pickup,
+      dropoff: s.metadata.dropoff,
+      datetime: s.metadata.datetime,
+      vehicleType: s.metadata.vehicleType,
+      totalFare: parseFloat(s.metadata.totalFare),
+      distanceKm: s.metadata.distanceKm,
+      durationMin: s.metadata.durationMin,
+      notes: s.metadata.notes,
+      paidAt: new Date()
+    };
+
+    const bookingsFile = path.join(__dirname, 'bookings.json');
+    let allBookings = [];
+    if (fs.existsSync(bookingsFile)) allBookings = JSON.parse(fs.readFileSync(bookingsFile));
+    allBookings.push(booking);
+    fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
+    console.log('✅ Booking saved:', booking.id);
+
+    // Add to driver jobs
+    const jobsFile = path.join(__dirname, 'driver-jobs.json');
+    let jobs = [];
+    if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+
+    const driverPay = calculateDriverPayout(parseFloat(booking.totalFare));
+
+    const newJob = {
+      id: booking.id,
+      driverEmail: '',
+      bookingData: booking,
+      driverPay,
+      assignedAt: new Date()
+    };
+
+    jobs.push(newJob);
+    fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+    console.log('✅ Booking also added to driver-jobs.json:', newJob.id);
+
+    sendEmail(booking).catch(console.error);
+    sendInvoicePDF(booking, s.id).catch(console.error);
+  }
+
+  res.json({ received: true });
+});
+
+/* ------------------- BODY PARSERS ------------------- */
+app.use(bodyParser.json());
+
+/* ------------------- EMAIL & PDF FUNCTIONS ------------------- */
+async function sendEmail(booking) {
+  try {
+    await transporter.sendMail({
+      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_TO,
+      subject: `New Booking from ${booking.name}`,
+      html: `
+        <h2>New Chauffeur Booking</h2>
+        <p><strong>Name:</strong> ${booking.name}</p>
+        <p><strong>Email:</strong> ${booking.email}</p>
+        <p><strong>Phone:</strong> ${booking.phone}</p>
+        <p><strong>Pickup:</strong> ${booking.pickup}</p>
+        <p><strong>Dropoff:</strong> ${booking.dropoff}</p>
+        <p><strong>Pickup Time:</strong> ${booking.datetime}</p>
+        <p><strong>Vehicle Type:</strong> ${booking.vehicleType}</p>
+        <p><strong>Total Fare:</strong> $${booking.totalFare}</p>
+        <p><strong>Distance:</strong> ${booking.distanceKm} km</p>
+        <p><strong>Estimated Time:</strong> ${booking.durationMin} min</p>
+        <p><strong>Notes:</strong> ${booking.notes || 'None'}</p>
+      `
+    });
+  } catch (err) { console.error('Email error:', err); }
+}
+
+async function sendInvoicePDF(booking, sessionId) {
+  try {
+    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    const bufferStream = new streamBuffers.WritableStreamBuffer();
+    doc.pipe(bufferStream);
+
+    doc.fontSize(20).fillColor('#B9975B').text('CHAUFFEUR DE LUXE', { align: 'center' });
+    doc.fontSize(12).fillColor('black').text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(18).fillColor('black').text('Invoice', { align: 'center' });
+    doc.moveDown();
+
+    doc.fontSize(12)
+      .text('Business Name: Chauffeur de Luxe')
+      .text('ABN: ______________________ (to be filled)')
+      .moveDown();
+
+    doc.text(`Invoice Number: ${sessionId}`)
+      .text(`Date: ${new Date().toLocaleDateString()}`)
+      .moveDown();
+
+    doc.text('Billed To:')
+      .text(`Name: ${booking.name}`)
+      .text(`Email: ${booking.email}`)
+      .text(`Phone: ${booking.phone}`)
+      .moveDown();
+
+    doc.text(`Pickup: ${booking.pickup}`)
+      .text(`Dropoff: ${booking.dropoff}`)
+      .text(`Pickup Time: ${booking.datetime}`)
+      .text(`Vehicle Type: ${booking.vehicleType}`)
+      .moveDown();
+
+    doc.text(`Distance: ${booking.distanceKm} km`)
+      .text(`Estimated Duration: ${booking.durationMin} min`)
+      .text(`Notes: ${booking.notes || 'None'}`)
+      .moveDown();
+
+    doc.fontSize(14).text(`Total Fare: $${booking.totalFare}`, { align: 'right' });
+    doc.end();
+
+    bufferStream.on('finish', async () => {
+      const pdfBuffer = bufferStream.getContents();
+      await transporter.sendMail({
+        from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+        to: booking.email,
+        subject: 'Your Chauffeur de Luxe Invoice',
+        text: 'Please find your invoice attached.',
+        attachments: [{ filename: 'invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
+      });
+    });
+  } catch (err) {
+    console.error('Invoice PDF error:', err);
+  }
+}
+
+/* ------------------- STRIPE CHECKOUT SESSION ------------------- */
 app.post('/create-checkout-session', async (req, res) => {
-  const { name, email, phone, pickup, dropoff, datetime, vehicleType, totalFare, distanceKm, durationMin, notes } = req.body;
+  const {
+    name,
+    email,
+    phone,
+    pickup,
+    dropoff,
+    datetime,
+    vehicleType,
+    totalFare,
+    distanceKm,
+    durationMin,
+    notes,
+    hourlyNotes
+  } = req.body;
+
+  const finalNotes = hourlyNotes || notes || '';
 
   if (!email || !totalFare || totalFare < 10) {
     return res.status(400).json({ error: 'Invalid booking data.' });
@@ -87,18 +275,26 @@ app.post('/create-checkout-session', async (req, res) => {
       line_items: [{
         price_data: {
           currency: 'aud',
-          product_data: { name: `Chauffeur Booking – ${vehicleType.toUpperCase()}` },
+          product_data: {
+            name: `Chauffeur Booking – ${vehicleType.toUpperCase()}`,
+            description: `Pickup: ${pickup}, Dropoff: ${dropoff}, Time: ${datetime}`
+          },
           unit_amount: Math.round(totalFare * 100)
         },
         quantity: 1
       }],
       metadata: {
-        name, email, phone, pickup, dropoff,
-        datetime, vehicleType,
+        name,
+        email,
+        phone,
+        pickup,
+        dropoff,
+        datetime,
+        vehicleType,
         totalFare: totalFare.toString(),
-        distanceKm: distanceKm.toString(),
-        durationMin: durationMin.toString(),
-        notes: notes || ''
+        notes: finalNotes,
+        distanceKm: distanceKm ? distanceKm.toString() : 'N/A',
+        durationMin: durationMin ? durationMin.toString() : 'N/A'
       },
       success_url: 'https://bookingform-pi.vercel.app/success.html',
       cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
@@ -106,67 +302,278 @@ app.post('/create-checkout-session', async (req, res) => {
 
     res.status(200).json({ id: session.id, url: session.url });
   } catch (err) {
-    console.error('Stripe checkout error:', err);
     res.status(500).json({ error: 'Stripe session creation failed.' });
   }
 });
 
+/* ------------------- DRIVER JOB LOGIC ------------------- */
+function calculateDriverPayout(clientFare) {
+  const net = clientFare / 1.45;
+  return parseFloat(net.toFixed(2));
+}
+
+app.post('/assign-job', (req, res) => {
+  const { driverEmail, bookingData } = req.body;
+  if (!driverEmail || !bookingData) return res.status(400).json({ error: 'Missing driverEmail or bookingData' });
+
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  let jobs = [];
+  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+
+  const driverPay = calculateDriverPayout(parseFloat(bookingData.totalFare));
+
+  const newJob = {
+    id: bookingData.id,
+    driverEmail,
+    bookingData,
+    driverPay,
+    assignedAt: new Date()
+  };
+
+  jobs.push(newJob);
+  fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+
+  transporter.sendMail({
+    from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+    to: driverEmail,
+    subject: `New Chauffeur Job Assigned`,
+    html: `
+      <h2>You have a new job assigned</h2>
+      <p><strong>Name:</strong> ${bookingData.name}</p>
+      <p><strong>Email:</strong> ${bookingData.email}</p>
+      <p><strong>Phone:</strong> ${bookingData.phone}</p>
+      <p><strong>Pickup:</strong> ${bookingData.pickup}</p>
+      <p><strong>Dropoff:</strong> ${bookingData.dropoff}</p>
+      <p><strong>Pickup Time:</strong> ${bookingData.datetime}</p>
+      <p><strong>Vehicle Type:</strong> ${bookingData.vehicleType}</p>
+      <p><strong>Driver Payout:</strong> $${driverPay}</p>
+      <p><strong>Notes:</strong> ${bookingData.notes || 'None'}</p>
+      <p>Please login to your driver dashboard to view full details.</p>
+    `
+  }).catch(console.error);
+
+  res.json({ message: 'Job assigned successfully', jobId: newJob.id });
+});
+
+/* ------------------- PENDING BOOKINGS ROUTE ------------------- */
+app.get('/pending-bookings', async (req, res) => {
+  try {
+    const bookingsFile = path.join(__dirname, 'bookings.json');
+    let bookings = [];
+    if (fs.existsSync(bookingsFile)) bookings = JSON.parse(fs.readFileSync(bookingsFile));
+
+    const jobsFile = path.join(__dirname, 'driver-jobs.json');
+    let jobs = [];
+    if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+
+    const assignedBookingIds = jobs
+      .filter(j => j.driverEmail && j.driverEmail.trim() !== '')
+      .map(j => j.bookingData.id.toString());
+
+    const { data: completed, error } = await supabase.from('completed_jobs').select('id');
+    if (error) {
+      console.error('Error fetching completed jobs:', error);
+      return res.status(500).json({ error: 'Failed to fetch completed jobs' });
+    }
+    const completedBookingIds = (completed || []).map(c => c.id.toString());
+
+    const pending = bookings.filter(
+      b => !assignedBookingIds.includes(b.id.toString()) && !completedBookingIds.includes(b.id.toString())
+    );
+
+    res.json(pending);
+  } catch (err) {
+    console.error('Pending bookings error:', err);
+    res.status(500).json({ error: 'Server error fetching pending bookings' });
+  }
+});
+
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const bodyParser = require('body-parser');
+const nodemailer = require('nodemailer');
+const path = require('path');
+const multer = require('multer');
+const fs = require('fs');
+const cron = require('node-cron');
+const PDFDocument = require('pdfkit');
+const streamBuffers = require('stream-buffers');
+
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+const app = express();
+app.use(cors());
+app.use(express.static('public'));
+
+/* ------------------- HELPER: SAVE COMPLETED JOB ------------------- */
+async function saveCompletedJob(job) {
+  const { error } = await supabase.from('completed_jobs').insert([job]);
+  if (error) console.error('Supabase insert error:', error);
+}
+
+/* ------------------- MULTER SETUP ------------------- */
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadPath = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath);
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + '-' + file.originalname);
+  }
+});
+const upload = multer({ storage });
+
+/* ------------------- NODEMAILER ------------------- */
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+});
+
+/* ------------------- PARTNER FORM ROUTE ------------------- */
+app.post('/partner-form', upload.fields([
+  { name: 'insuranceFile', maxCount: 1 },
+  { name: 'regoFile', maxCount: 1 },
+  { name: 'licenceFile', maxCount: 1 }
+]), async (req, res) => {
+  try {
+    const data = req.body;
+    const files = req.files;
+
+    let drivers = [];
+    const dataPath = path.join(__dirname, 'drivers.json');
+    if (fs.existsSync(dataPath)) drivers = JSON.parse(fs.readFileSync(dataPath));
+    const driverRecord = { ...data, files, submittedAt: new Date() };
+    drivers.push(driverRecord);
+    fs.writeFileSync(dataPath, JSON.stringify(drivers, null, 2));
+
+    const attachments = [];
+    for (let field in files) {
+      attachments.push({ filename: files[field][0].originalname, path: files[field][0].path });
+    }
+    await transporter.sendMail({
+      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_TO,
+      subject: `New Driver Partner Submission - ${data.fullName}`,
+      html: `
+        <h2>Driver Partner Application</h2>
+        <p><strong>Company:</strong> ${data.companyName}</p>
+        <p><strong>Name:</strong> ${data.fullName}</p>
+        <p><strong>Email:</strong> ${data.email}</p>
+        <p><strong>Phone:</strong> ${data.phone}</p>
+        <p><strong>Car:</strong> ${data.carMake} ${data.carModel} (${data.carYear})</p>
+        <p><strong>Registration Expiry:</strong> ${data.regoExpiry}</p>
+        <p><strong>Insurance Expiry:</strong> ${data.insuranceExpiry}</p>
+      `,
+      attachments
+    });
+
+    res.status(200).json({ message: 'Form submitted successfully' });
+  } catch (err) {
+    console.error('Partner form error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 /* ------------------- STRIPE WEBHOOK ------------------- */
-app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    console.log('Webhook received:', event.type);
   } catch (err) {
-    console.error('Webhook signature failed:', err.message);
+    console.error('⚠️  Webhook signature verification failed.', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
   if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
+    console.log('✅ Payment completed webhook received');
+
+    const s = event.data.object;
+    const bookingId = Date.now().toString();
 
     const booking = {
-      id: Date.now(),
-      customername: session.metadata.name,
-      customeremail: session.metadata.email,
-      customerphone: session.metadata.phone,
-      pickup: session.metadata.pickup,
-      dropoff: session.metadata.dropoff,
-      pickuptime: session.metadata.datetime,
-      vehicletype: session.metadata.vehicleType,
-      fare: parseFloat(session.metadata.totalFare),
-      distance_km: parseFloat(session.metadata.distanceKm),
-      duration_min: parseFloat(session.metadata.durationMin),
-      notes: session.metadata.notes,
-      status: 'pending',
-      createdat: new Date().toISOString(),
-      assignedto: null,
-      assignedat: null
+      id: bookingId,
+      name: s.metadata.name,
+      email: s.metadata.email,
+      phone: s.metadata.phone,
+      pickup: s.metadata.pickup,
+      dropoff: s.metadata.dropoff,
+      datetime: s.metadata.datetime,
+      vehicleType: s.metadata.vehicleType,
+      totalFare: parseFloat(s.metadata.totalFare),
+      distanceKm: s.metadata.distanceKm,
+      durationMin: s.metadata.durationMin,
+      notes: s.metadata.notes,
+      paidAt: new Date()
     };
 
-    try {
-      const { data, error } = await supabase.from('pending_jobs').insert([booking]);
-      if (error) console.error('Supabase insert error:', error);
+    const bookingsFile = path.join(__dirname, 'bookings.json');
+    let allBookings = [];
+    if (fs.existsSync(bookingsFile)) allBookings = JSON.parse(fs.readFileSync(bookingsFile));
+    allBookings.push(booking);
+    fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
+    console.log('✅ Booking saved:', booking.id);
 
-      await sendEmail(booking);
-      await sendInvoicePDF(booking, session.id);
-    } catch (err) { console.error('Webhook insert error:', err); }
+    // Add to driver jobs
+    const jobsFile = path.join(__dirname, 'driver-jobs.json');
+    let jobs = [];
+    if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+
+    const driverPay = calculateDriverPayout(parseFloat(booking.totalFare));
+
+    const newJob = {
+      id: booking.id,
+      driverEmail: '',
+      bookingData: booking,
+      driverPay,
+      assignedAt: new Date()
+    };
+
+    jobs.push(newJob);
+    fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+    console.log('✅ Booking also added to driver-jobs.json:', newJob.id);
+
+    sendEmail(booking).catch(console.error);
+    sendInvoicePDF(booking, s.id).catch(console.error);
   }
 
-  res.status(200).json({ received: true });
+  res.json({ received: true });
 });
 
-/* ------------------- EMAIL FUNCTIONS ------------------- */
+/* ------------------- BODY PARSERS ------------------- */
+app.use(bodyParser.json());
+
+/* ------------------- EMAIL & PDF FUNCTIONS ------------------- */
 async function sendEmail(booking) {
   try {
     await transporter.sendMail({
       from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
       to: process.env.EMAIL_TO,
-      subject: `New Booking from ${booking.customername}`,
-      html: `<p>Name: ${booking.customername}</p>
-             <p>Pickup: ${booking.pickup}</p>
-             <p>Dropoff: ${booking.dropoff}</p>`
+      subject: `New Booking from ${booking.name}`,
+      html: `
+        <h2>New Chauffeur Booking</h2>
+        <p><strong>Name:</strong> ${booking.name}</p>
+        <p><strong>Email:</strong> ${booking.email}</p>
+        <p><strong>Phone:</strong> ${booking.phone}</p>
+        <p><strong>Pickup:</strong> ${booking.pickup}</p>
+        <p><strong>Dropoff:</strong> ${booking.dropoff}</p>
+        <p><strong>Pickup Time:</strong> ${booking.datetime}</p>
+        <p><strong>Vehicle Type:</strong> ${booking.vehicleType}</p>
+        <p><strong>Total Fare:</strong> $${booking.totalFare}</p>
+        <p><strong>Distance:</strong> ${booking.distanceKm} km</p>
+        <p><strong>Estimated Time:</strong> ${booking.durationMin} min</p>
+        <p><strong>Notes:</strong> ${booking.notes || 'None'}</p>
+      `
     });
   } catch (err) { console.error('Email error:', err); }
 }
@@ -176,172 +583,197 @@ async function sendInvoicePDF(booking, sessionId) {
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
     const bufferStream = new streamBuffers.WritableStreamBuffer();
     doc.pipe(bufferStream);
+
     doc.fontSize(20).fillColor('#B9975B').text('CHAUFFEUR DE LUXE', { align: 'center' });
+    doc.fontSize(12).fillColor('black').text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
+    doc.moveDown();
     doc.fontSize(18).fillColor('black').text('Invoice', { align: 'center' });
+    doc.moveDown();
+
+    doc.fontSize(12)
+      .text('Business Name: Chauffeur de Luxe')
+      .text('ABN: ______________________ (to be filled)')
+      .moveDown();
+
+    doc.text(`Invoice Number: ${sessionId}`)
+      .text(`Date: ${new Date().toLocaleDateString()}`)
+      .moveDown();
+
+    doc.text('Billed To:')
+      .text(`Name: ${booking.name}`)
+      .text(`Email: ${booking.email}`)
+      .text(`Phone: ${booking.phone}`)
+      .moveDown();
+
+    doc.text(`Pickup: ${booking.pickup}`)
+      .text(`Dropoff: ${booking.dropoff}`)
+      .text(`Pickup Time: ${booking.datetime}`)
+      .text(`Vehicle Type: ${booking.vehicleType}`)
+      .moveDown();
+
+    doc.text(`Distance: ${booking.distanceKm} km`)
+      .text(`Estimated Duration: ${booking.durationMin} min`)
+      .text(`Notes: ${booking.notes || 'None'}`)
+      .moveDown();
+
+    doc.fontSize(14).text(`Total Fare: $${booking.totalFare}`, { align: 'right' });
     doc.end();
 
     bufferStream.on('finish', async () => {
       const pdfBuffer = bufferStream.getContents();
       await transporter.sendMail({
         from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-        to: booking.customeremail,
-        subject: 'Your Invoice',
+        to: booking.email,
+        subject: 'Your Chauffeur de Luxe Invoice',
         text: 'Please find your invoice attached.',
         attachments: [{ filename: 'invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
       });
     });
-  } catch (err) { console.error('Invoice PDF error:', err); }
+  } catch (err) {
+    console.error('Invoice PDF error:', err);
+  }
 }
 
-/* ------------------- GET PENDING & COMPLETED JOBS ------------------- */
-app.get('/pending-jobs', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('pending_jobs')
-      .select('*')
-      .order('createdat', { ascending: false });
+/* ------------------- STRIPE CHECKOUT SESSION ------------------- */
+app.post('/create-checkout-session', async (req, res) => {
+  const {
+    name,
+    email,
+    phone,
+    pickup,
+    dropoff,
+    datetime,
+    vehicleType,
+    totalFare,
+    distanceKm,
+    durationMin,
+    notes,
+    hourlyNotes
+  } = req.body;
 
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
-  } catch (err) {
-    console.error('Fetch pending jobs error:', err);
-    res.status(500).json({ error: 'Failed to fetch pending jobs' });
+  const finalNotes = hourlyNotes || notes || '';
+
+  if (!email || !totalFare || totalFare < 10) {
+    return res.status(400).json({ error: 'Invalid booking data.' });
   }
-});
 
-app.get('/completed-jobs', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('completed_jobs')
-      .select('*')
-      .order('assignedat', { ascending: false });
-
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
-  } catch (err) {
-    console.error('Fetch completed jobs error:', err);
-    res.status(500).json({ error: 'Failed to fetch completed jobs' });
-  }
-});
-
-/* ------------------- ASSIGN / CONFIRM JOB ------------------- */
-app.post('/assign-job', async (req, res) => {
-  try {
-    const { bookingData } = req.body;
-    if (!bookingData || !bookingData.id || !bookingData.assignedto) {
-      return res.status(400).json({ error: 'Missing booking ID or driver email' });
-    }
-
-    // Fetch the pending job
-    const { data: pendingData, error: fetchError } = await supabase
-      .from('pending_jobs')
-      .select('*')
-      .eq('id', bookingData.id)
-      .single();
-
-    if (fetchError || !pendingData) return res.status(404).json({ error: 'Booking not found' });
-
-    const driverPay = pendingData.fare * 0.8;
-
-    // Move job to completed_jobs table
-    const { error: insertError } = await supabase.from('completed_jobs').insert([{
-      id: pendingData.id,
-      customername: pendingData.customername,
-      customeremail: pendingData.customeremail,
-      customerphone: pendingData.customerphone,
-      pickup: pendingData.pickup,
-      dropoff: pendingData.dropoff,
-      pickuptime: pendingData.pickuptime,
-      vehicletype: pendingData.vehicletype,
-      fare: pendingData.fare,
-      status: 'completed',
-      createdat: pendingData.createdat,
-      assignedto: bookingData.assignedto,
-      distance_km: pendingData.distance_km,
-      duration_min: pendingData.duration_min,
-      notes: pendingData.notes,
-      driverEmail: bookingData.assignedto,
-      driverPay,
-      assignedat: new Date().toISOString(),
-      completedAt: new Date().toISOString()
-    }]);
-
-    if (insertError) return res.status(500).json({ error: 'Error assigning job' });
-
-    // Delete from pending_jobs
-    await supabase.from('pending_jobs').delete().eq('id', bookingData.id);
-
-    // Notify driver via email
-    await transporter.sendMail({
-      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-      to: bookingData.assignedto,
-      subject: `New Chauffeur Job Assigned`,
-      html: `<p>You have a new job assigned.</p>
-             <p>Pickup: ${pendingData.pickup}<br>
-             Dropoff: ${pendingData.dropoff}<br>
-             Fare: $${driverPay}</p>`
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      mode: 'payment',
+      customer_email: email,
+      line_items: [{
+        price_data: {
+          currency: 'aud',
+          product_data: {
+            name: `Chauffeur Booking – ${vehicleType.toUpperCase()}`,
+            description: `Pickup: ${pickup}, Dropoff: ${dropoff}, Time: ${datetime}`
+          },
+          unit_amount: Math.round(totalFare * 100)
+        },
+        quantity: 1
+      }],
+      metadata: {
+        name,
+        email,
+        phone,
+        pickup,
+        dropoff,
+        datetime,
+        vehicleType,
+        totalFare: totalFare.toString(),
+        notes: finalNotes,
+        distanceKm: distanceKm ? distanceKm.toString() : 'N/A',
+        durationMin: durationMin ? durationMin.toString() : 'N/A'
+      },
+      success_url: 'https://bookingform-pi.vercel.app/success.html',
+      cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
     });
 
-    res.json({ message: 'Job assigned successfully' });
+    res.status(200).json({ id: session.id, url: session.url });
   } catch (err) {
-    console.error('Assign job error:', err);
-    res.status(500).json({ error: 'Server error in /assign-job' });
+    res.status(500).json({ error: 'Stripe session creation failed.' });
   }
 });
 
-/* ------------------- DRIVER LOGIN ------------------- */
-app.post('/driver-login', async (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email required' });
+/* ------------------- DRIVER JOB LOGIC ------------------- */
+function calculateDriverPayout(clientFare) {
+  const net = clientFare / 1.45;
+  return parseFloat(net.toFixed(2));
+}
 
+app.post('/assign-job', (req, res) => {
+  const { driverEmail, bookingData } = req.body;
+  if (!driverEmail || !bookingData) return res.status(400).json({ error: 'Missing driverEmail or bookingData' });
+
+  const jobsFile = path.join(__dirname, 'driver-jobs.json');
+  let jobs = [];
+  if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
+
+  const driverPay = calculateDriverPayout(parseFloat(bookingData.totalFare));
+
+  const newJob = {
+    id: bookingData.id,
+    driverEmail,
+    bookingData,
+    driverPay,
+    assignedAt: new Date()
+  };
+
+  jobs.push(newJob);
+  fs.writeFileSync(jobsFile, JSON.stringify(jobs, null, 2));
+
+  transporter.sendMail({
+    from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+    to: driverEmail,
+    subject: `New Chauffeur Job Assigned`,
+    html: `
+      <h2>You have a new job assigned</h2>
+      <p><strong>Name:</strong> ${bookingData.name}</p>
+      <p><strong>Email:</strong> ${bookingData.email}</p>
+      <p><strong>Phone:</strong> ${bookingData.phone}</p>
+      <p><strong>Pickup:</strong> ${bookingData.pickup}</p>
+      <p><strong>Dropoff:</strong> ${bookingData.dropoff}</p>
+      <p><strong>Pickup Time:</strong> ${bookingData.datetime}</p>
+      <p><strong>Vehicle Type:</strong> ${bookingData.vehicleType}</p>
+      <p><strong>Driver Payout:</strong> $${driverPay}</p>
+      <p><strong>Notes:</strong> ${bookingData.notes || 'None'}</p>
+      <p>Please login to your driver dashboard to view full details.</p>
+    `
+  }).catch(console.error);
+
+  res.json({ message: 'Job assigned successfully', jobId: newJob.id });
+});
+
+/* ------------------- PENDING BOOKINGS ROUTE ------------------- */
+app.get('/pending-bookings', async (req, res) => {
   try {
-    const { data: pendingJobs, error: pendingError } = await supabase
-      .from('pending_jobs')
-      .select('*')
-      .eq('assignedto', email);
+    const bookingsFile = path.join(__dirname, 'bookings.json');
+    let bookings = [];
+    if (fs.existsSync(bookingsFile)) bookings = JSON.parse(fs.readFileSync(bookingsFile));
 
-    const { data: completedJobs, error: completedError } = await supabase
-      .from('completed_jobs')
-      .select('*')
-      .eq('assignedto', email);
+    const jobsFile = path.join(__dirname, 'driver-jobs.json');
+    let jobs = [];
+    if (fs.existsSync(jobsFile)) jobs = JSON.parse(fs.readFileSync(jobsFile));
 
-    if (pendingError || completedError) {
-      return res.status(500).json({ error: 'Failed to fetch driver jobs' });
+    const assignedBookingIds = jobs
+      .filter(j => j.driverEmail && j.driverEmail.trim() !== '')
+      .map(j => j.bookingData.id.toString());
+
+    const { data: completed, error } = await supabase.from('completed_jobs').select('id');
+    if (error) {
+      console.error('Error fetching completed jobs:', error);
+      return res.status(500).json({ error: 'Failed to fetch completed jobs' });
     }
+    const completedBookingIds = (completed || []).map(c => c.id.toString());
 
-    res.json({ jobs: pendingJobs || [], completed: completedJobs || [] });
+    const pending = bookings.filter(
+      b => !assignedBookingIds.includes(b.id.toString()) && !completedBookingIds.includes(b.id.toString())
+    );
+
+    res.json(pending);
   } catch (err) {
-    console.error('Driver login error:', err);
-    res.status(500).json({ error: 'Failed to fetch driver jobs' });
+    console.error('Pending bookings error:', err);
+    res.status(500).json({ error: 'Server error fetching pending bookings' });
   }
 });
-
-/* ------------------- CRON JOB FOR DRIVER RENEWALS ------------------- */
-cron.schedule('0 9 * * *', () => {
-  const dataPath = path.join(__dirname, 'drivers.json');
-  if (!fs.existsSync(dataPath)) return;
-
-  const drivers = JSON.parse(fs.readFileSync(dataPath));
-  const today = new Date();
-
-  drivers.forEach(driver => {
-    const regoDate = new Date(driver.regoExpiry);
-    const insuranceDate = new Date(driver.insuranceExpiry);
-
-    [{ type: 'Registration', date: regoDate }, { type: 'Insurance', date: insuranceDate }].forEach(item => {
-      const diffDays = Math.ceil((item.date - today) / (1000 * 60 * 60 * 24));
-      if (diffDays === 30) {
-        transporter.sendMail({
-          from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-          to: process.env.EMAIL_TO,
-          subject: `${item.type} Renewal Reminder - ${driver.fullName}`,
-          text: `${driver.fullName}'s ${item.type} expires in 30 days on ${item.date.toDateString()}.`
-        }).catch(console.error);
-      }
-    });
-  });
-});
-
-/* ------------------- START SERVER ------------------- */
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
