@@ -190,7 +190,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         distance_km: booking.distanceKm,
         duration_min: booking.durationMin,
         notes: booking.notes,
-        driverEmail: null
+        driverEmail: null // important fix for driver job assignment
       }]);
       console.log('✅ Booking inserted into Supabase pending_jobs:', booking.id);
     } catch (err) {
@@ -319,6 +319,7 @@ app.post('/driver-set-password', async (req, res) => {
   }
 });
 
+/* ------------------- CHECK DRIVER ------------------- */
 app.post('/check-driver', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
@@ -373,17 +374,22 @@ app.get('/driver-jobs', async (req, res) => {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Missing driver email' });
 
+    const emailLower = email.trim().toLowerCase();
+
+    // Pending jobs assigned to this driver or unassigned
     const { data: pending, error: pendingError } = await supabase
       .from('pending_jobs')
       .select('*')
-      .eq('driverEmail', email);
+      .or(`driverEmail.eq.${emailLower},driverEmail.is.null`)
+      .order('createdat', { ascending: true });
 
     if (pendingError) return res.status(500).json({ error: 'Failed to fetch pending jobs' });
 
+    // Completed jobs for this driver
     const { data: completed, error: completedError } = await supabase
       .from('completed_jobs')
       .select('*')
-      .eq('driverEmail', email)
+      .eq('driverEmail', emailLower)
       .order('completedAt', { ascending: false });
 
     if (completedError) return res.status(500).json({ error: 'Failed to fetch completed jobs' });
@@ -411,7 +417,7 @@ app.post('/assign-job', async (req, res) => {
 
     await supabase
       .from('pending_jobs')
-      .update({ driverEmail })
+      .update({ driverEmail: driverEmail.trim().toLowerCase() })
       .eq('id', bookingId);
 
     res.json({ success: true, message: 'Job assigned to driver' });
@@ -437,12 +443,12 @@ app.post('/complete-job', async (req, res) => {
 
     const completedJob = {
       ...job,
-      driverEmail,
+      driverEmail: driverEmail.trim().toLowerCase(),
       completedAt: new Date(),
       status: 'completed'
     };
 
-    delete completedJob.id; // Let Supabase assign new ID
+    delete completedJob.id; // Let Supabase assign a new ID
 
     const { error: insertError } = await supabase
       .from('completed_jobs')
