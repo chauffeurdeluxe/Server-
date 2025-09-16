@@ -418,44 +418,40 @@ app.get('/pending-bookings', async (req, res) => {
   }
 });
 
-/* ------------------- DRIVER SET PASSWORD / RESET (DEBUG VERSION) ------------------- */
+/* ------------------- DRIVER SET PASSWORD / RESET ------------------- */
 app.post('/driver-set-password', async (req, res) => {
-  const { email, newPassword } = req.body;
-
-  console.log('Password request body:', req.body); // Step 1: see what frontend sends
+  let { email, newPassword } = req.body;
 
   if (!email || !newPassword) {
     return res.status(400).json({ error: 'Email and new password required' });
   }
 
+  email = email.trim().toLowerCase(); // ✅ Trim & lowercase to match table
+
   try {
-    // Step 2: check if driver exists
-    const { data: driverCheck, error: driverError } = await supabase
+    // Check if driver exists
+    const { data: driver, error: selectError } = await supabase
       .from('drivers')
       .select('*')
       .eq('email', email)
       .single();
 
-    console.log('Driver found:', driverCheck, 'Error:', driverError);
-
-    if (!driverCheck) {
-      return res.status(404).json({ error: 'Driver email not found' });
+    if (selectError || !driver) {
+      return res.status(404).json({ error: 'Email not found' });
     }
 
-    // Step 3: hash the password
+    // Hash the new password
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
-    console.log('Hashed password:', hashedPassword);
 
-    // Step 4: attempt update
-    const { data, error } = await supabase
+    // Update driver record
+    const { error: updateError } = await supabase
       .from('drivers')
       .update({ passwordhash: hashedPassword })
       .eq('email', email);
 
-    console.log('Update result:', { data, error });
-
-    if (error) {
+    if (updateError) {
+      console.error('Supabase update password error:', updateError);
       return res.status(500).json({ error: 'Failed to set password' });
     }
 
