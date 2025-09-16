@@ -418,27 +418,44 @@ app.get('/pending-bookings', async (req, res) => {
   }
 });
 
-/* ------------------- DRIVER SET PASSWORD / RESET ------------------- */
+/* ------------------- DRIVER SET PASSWORD / RESET (DEBUG VERSION) ------------------- */
 app.post('/driver-set-password', async (req, res) => {
   const { email, newPassword } = req.body;
+
+  console.log('Password request body:', req.body); // Step 1: see what frontend sends
 
   if (!email || !newPassword) {
     return res.status(400).json({ error: 'Email and new password required' });
   }
 
   try {
-    // Hash the password
+    // Step 2: check if driver exists
+    const { data: driverCheck, error: driverError } = await supabase
+      .from('drivers')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    console.log('Driver found:', driverCheck, 'Error:', driverError);
+
+    if (!driverCheck) {
+      return res.status(404).json({ error: 'Driver email not found' });
+    }
+
+    // Step 3: hash the password
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+    console.log('Hashed password:', hashedPassword);
 
-    // Update driver record
+    // Step 4: attempt update
     const { data, error } = await supabase
       .from('drivers')
       .update({ passwordhash: hashedPassword })
       .eq('email', email);
 
+    console.log('Update result:', { data, error });
+
     if (error) {
-      console.error('Supabase update password error:', error);
       return res.status(500).json({ error: 'Failed to set password' });
     }
 
