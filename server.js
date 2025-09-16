@@ -132,6 +132,32 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
     fs.writeFileSync(bookingsFile, JSON.stringify(allBookings, null, 2));
     console.log('✅ Booking saved:', booking.id);
 
+    // Add booking to Supabase pending table
+try {
+  const { data: pendingData, error: pendingError } = await supabase
+    .from('pending_bookings')      // <-- replace with your actual pending table name
+    .insert([{
+      id: booking.id,
+      name: booking.name,
+      email: booking.email,
+      phone: booking.phone,
+      pickup: booking.pickup,
+      dropoff: booking.dropoff,
+      datetime: booking.datetime,
+      vehicleType: booking.vehicleType,
+      totalFare: booking.totalFare,
+      distanceKm: booking.distanceKm,
+      durationMin: booking.durationMin,
+      notes: booking.notes || '',
+      created_at: new Date()
+    }]);
+
+  if (pendingError) console.error('Supabase pending insert error:', pendingError);
+  else console.log('✅ Booking added to Supabase pending_bookings:', booking.id);
+} catch (err) {
+  console.error('Supabase pending insert exception:', err);
+}
+
     // Add to driver jobs
     const jobsFile = path.join(__dirname, 'driver-jobs.json');
     let jobs = [];
