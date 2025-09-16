@@ -318,6 +318,26 @@ app.post('/driver-set-password', async (req, res) => {
   }
 });
 
+app.post('/check-driver', async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email required' });
+
+  try {
+    const { data: driver, error } = await supabase
+      .from('drivers')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (error || !driver) return res.json({ needsPassword: false });
+
+    return res.json({ needsPassword: !driver.passwordhash });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 /* ------------------- DRIVER LOGIN ------------------- */
 app.post('/driver-login', async (req, res) => {
   try {
