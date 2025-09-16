@@ -10,7 +10,7 @@ const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const streamBuffers = require('stream-buffers');
 const { createClient } = require('@supabase/supabase-js');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
