@@ -417,13 +417,11 @@ app.get('/pending-bookings', async (req, res) => {
   }
 });
 
-/* ------------------- DRIVER LOGIN ------------------- */
+// ------------------- DRIVER LOGIN -------------------
 app.post('/driver-login', async (req, res) => {
   const { email, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Missing email or password' });
-  }
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
   try {
     const { data: driver, error } = await supabase
@@ -432,27 +430,24 @@ app.post('/driver-login', async (req, res) => {
       .eq('email', email)
       .single();
 
-    if (error || !driver) {
-      return res.status(401).json({ error: 'Invalid login credentials' });
-    }
+    if (error || !driver) return res.status(401).json({ error: 'Invalid email or password' });
 
-    // NOTE: Replace with bcrypt compare if passwords are hashed
-    if (driver.passwordhash !== password) {
-      return res.status(401).json({ error: 'Invalid login credentials' });
-    }
+    const match = await bcrypt.compare(password, driver.passwordhash);
+    if (!match) return res.status(401).json({ error: 'Invalid email or password' });
 
-    // Update last login
+    // Update last login timestamp
     await supabase
       .from('drivers')
       .update({ lastlogin: new Date() })
       .eq('id', driver.id);
 
-    res.json({ message: 'Login successful', driver });
+    res.json({ success: true, driver: { id: driver.id, name: driver.name, email: driver.email } });
   } catch (err) {
-    console.error('Driver login error:', err);
-    res.status(500).json({ error: 'Server error during login' });
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
+
 
 /* ------------------- COMPLETE JOB ROUTE ------------------- */
 app.post('/complete-job', async (req, res) => {
