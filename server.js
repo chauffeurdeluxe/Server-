@@ -450,7 +450,7 @@ app.post('/assign-job', async (req, res) => {
 
     await supabase
       .from('pending_jobs')
-      .update({ driverEmail: driverEmail.trim().toLowerCase() })
+      .update({ assignedto: driverEmail.trim().toLowerCase() })
       .eq('id', idToAssign);
 
     res.json({ success: true, message: 'Job assigned to driver', jobId: idToAssign });
