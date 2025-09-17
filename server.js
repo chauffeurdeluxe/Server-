@@ -381,7 +381,7 @@ app.post('/driver-login', async (req, res) => {
   }
 });
 
-// GET driver jobs
+// GET driver jobs with driver payout
 app.get('/driver-jobs', async (req, res) => {
   try {
     const email = req.query.email?.trim().toLowerCase();
@@ -400,12 +400,6 @@ app.get('/driver-jobs', async (req, res) => {
       return res.status(500).json({ error: 'Failed to fetch assigned jobs' });
     }
 
-    // Add driver payout for assigned jobs
-    const assignedJobsWithPay = assignedJobs.map(job => ({
-      ...job,
-      driverPay: calculateDriverPayout(job.fare)
-    }));
-
     // Completed jobs from completed_jobs
     const { data: completedJobs, error: completedError } = await supabase
       .from('completed_jobs')
@@ -418,13 +412,18 @@ app.get('/driver-jobs', async (req, res) => {
       return res.status(500).json({ error: 'Failed to fetch completed jobs' });
     }
 
-    // Add driver payout for completed jobs
-    const completedJobsWithPay = completedJobs.map(job => ({
+    // Calculate driver payout for assigned and completed jobs
+    const assignedWithPayout = (assignedJobs || []).map(job => ({
       ...job,
       driverPay: calculateDriverPayout(job.fare)
     }));
 
-    res.json({ assignedJobs: assignedJobsWithPay, completedJobs: completedJobsWithPay });
+    const completedWithPayout = (completedJobs || []).map(job => ({
+      ...job,
+      driverPay: calculateDriverPayout(job.fare)
+    }));
+
+    res.json({ assignedJobs: assignedWithPayout, completedJobs: completedWithPayout });
   } catch (err) {
     console.error('Driver jobs error:', err);
     res.status(500).json({ error: 'Server error fetching jobs' });
