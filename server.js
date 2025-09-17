@@ -381,36 +381,110 @@ app.post('/driver-login', async (req, res) => {
   }
 });
 
-/* ------------------- DRIVER JOBS ------------------- */
+// GET driver jobs
 app.get('/driver-jobs', async (req, res) => {
   try {
-    const email = req.query.email;
-    if (!email) return res.status(400).json({ error: 'Missing driver email' });
+    const email = req.query.email?.trim().toLowerCase();
+    if (!email) return res.status(400).json({ error: 'Driver email is required' });
 
-    const emailLower = email.trim().toLowerCase();
-
-    // Pending jobs assigned to this driver or unassigned
-    const { data: pending, error: pendingError } = await supabase
+    // Assigned jobs from pending_jobs
+    const { data: assignedJobs, error: assignedError } = await supabase
       .from('pending_jobs')
       .select('*')
-      .or(`driverEmail.eq.${emailLower},driverEmail.is.null`)
-      .order('createdat', { ascending: true });
+      .eq('assignedto', email)
+      .eq('status', 'assigned')
+      .order('pickuptime', { ascending: true });
 
-    if (pendingError) return res.status(500).json({ error: 'Failed to fetch pending jobs' });
+    if (assignedError) {
+      console.error('Error fetching assigned jobs:', assignedError);
+      return res.status(500).json({ error: 'Failed to fetch assigned jobs' });
+    }
 
-    // Completed jobs for this driver
-    const { data: completed, error: completedError } = await supabase
+    // Completed jobs from completed_jobs
+    const { data: completedJobs, error: completedError } = await supabase
       .from('completed_jobs')
       .select('*')
-      .eq('driverEmail', emailLower)
+      .eq('driverEmail', email)
       .order('completedAt', { ascending: false });
 
-    if (completedError) return res.status(500).json({ error: 'Failed to fetch completed jobs' });
+    if (completedError) {
+      console.error('Error fetching completed jobs:', completedError);
+      return res.status(500).json({ error: 'Failed to fetch completed jobs' });
+    }
 
-    res.json({ pendingJobs: pending || [], completedJobs: completed || [] });
+    res.json({ assignedJobs, completedJobs });
   } catch (err) {
-    console.error('Driver jobs fetch error:', err);
+    console.error('Driver jobs error:', err);
     res.status(500).json({ error: 'Server error fetching jobs' });
+  }
+});
+
+/* ------------------- UPDATE JOB STATUS ------------------- */
+app.post('/update-job', async (req, res) => {
+  try {
+    const { jobId, status, driverEmail } = req.body;
+
+    if (!jobId || !status || !driverEmail) {
+      return res.status(400).json({ error: 'Missing jobId, status, or driverEmail' });
+    }
+
+    const emailLower = driverEmail.trim().toLowerCase();
+
+    // Fetch the job from pending_jobs
+    const { data: job, error: fetchError } = await supabase
+      .from('pending_jobs')
+      .select('*')
+      .eq('id', jobId)
+      .single();
+
+    if (fetchError || !job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    if (status === 'confirmed' || status === 'refused') {
+      // Simply update status in pending_jobs
+      const { error: updateError } = await supabase
+        .from('pending_jobs')
+        .update({ status })
+        .eq('id', jobId);
+
+      if (updateError) throw updateError;
+
+      return res.json({ success: true, message: `Job ${status}` });
+    }
+
+    if (status === 'completed') {
+      // Move job from pending_jobs to completed_jobs
+      const completedData = {
+        ...job,
+        driverEmail: emailLower,
+        completedAt: new Date(),
+        status: 'completed'
+      };
+
+      // Insert into completed_jobs
+      const { error: insertError } = await supabase
+        .from('completed_jobs')
+        .insert([completedData]);
+
+      if (insertError) throw insertError;
+
+      // Delete from pending_jobs
+      const { error: deleteError } = await supabase
+        .from('pending_jobs')
+        .delete()
+        .eq('id', jobId);
+
+      if (deleteError) throw deleteError;
+
+      return res.json({ success: true, message: 'Job completed' });
+    }
+
+    res.status(400).json({ error: 'Invalid status' });
+
+  } catch (err) {
+    console.error('Update job error:', err);
+    res.status(500).json({ error: 'Server error updating job' });
   }
 });
 
