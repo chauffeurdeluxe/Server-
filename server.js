@@ -493,12 +493,13 @@ app.post('/update-job', async (req, res) => {
   }
 });
 
-/* ------------------- GET PENDING BOOKINGS FOR ADMIN ------------------- */
+// ------------------- GET PENDING BOOKINGS FOR ADMIN -------------------
 app.get('/pending-bookings', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('pending_jobs')
       .select('*')
+      .eq('status', 'pending')       // <-- only truly pending
       .order('createdat', { ascending: true });
 
     if (error) return res.status(500).json({ error: 'Failed to fetch pending bookings' });
@@ -510,24 +511,25 @@ app.get('/pending-bookings', async (req, res) => {
   }
 });
 
-/* ------------------- ASSIGN JOB ------------------- */
+// ------------------- ASSIGN JOB -------------------
 app.post('/assign-job', async (req, res) => {
   try {
-    const { driverEmail, bookingData, bookingId } = req.body;
+    const { driverEmail, bookingId } = req.body;
 
-    const idToAssign = bookingId || (bookingData && bookingData.id);
-    if (!driverEmail || !idToAssign) 
+    if (!driverEmail || !bookingId) 
       return res.status(400).json({ error: 'Missing driverEmail or bookingId' });
 
+    // Check if booking exists
     const { data: booking, error: bookingError } = await supabase
       .from('pending_jobs')
       .select('*')
-      .eq('id', idToAssign)
+      .eq('id', bookingId)
       .single();
 
     if (bookingError || !booking) 
       return res.status(404).json({ error: 'Booking not found' });
 
+    // Update booking to assigned
     const { data: updatedBooking, error: updateError } = await supabase
       .from('pending_jobs')
       .update({
@@ -535,28 +537,29 @@ app.post('/assign-job', async (req, res) => {
         status: 'assigned',
         assignedat: new Date()
       })
-      .eq('id', idToAssign)
+      .eq('id', bookingId)
       .select()
       .single();
 
     if (updateError) {
-      console.error('Error updating booking:', updateError);
+      console.error('Error assigning booking:', updateError);
       return res.status(500).json({ error: 'Failed to assign job' });
     }
 
-    res.json({ success: true, message: 'Job assigned to driver', jobId: idToAssign });
+    res.json({ success: true, message: `Job assigned to ${driverEmail}`, jobId: bookingId });
   } catch (err) {
     console.error('Assign job error:', err);
     res.status(500).json({ error: 'Server error assigning job' });
   }
 });
 
-/* ------------------- COMPLETE JOB ------------------- */
+// ------------------- COMPLETE JOB -------------------
 app.post('/complete-job', async (req, res) => {
   try {
     const { jobId, driverEmail } = req.body;
     if (!jobId || !driverEmail) return res.status(400).json({ error: 'Missing jobId or driverEmail' });
 
+    // Fetch job from pending
     const { data: job, error: jobError } = await supabase
       .from('pending_jobs')
       .select('*')
@@ -565,24 +568,35 @@ app.post('/complete-job', async (req, res) => {
 
     if (jobError || !job) return res.status(404).json({ error: 'Job not found' });
 
-    const completedJob = {
-      ...job,
-      driverEmail: driverEmail.trim().toLowerCase(),
-      completedAt: new Date(),
-      status: 'completed'
-    };
-
-    delete completedJob.id; // Let Supabase assign a new ID
-
-    const { error: insertError } = await supabase
+    // Insert into completed_jobs
+    const { data: insertedJob, error: insertError } = await supabase
       .from('completed_jobs')
-      .insert([completedJob]);
+      .insert([{
+        ...job,
+        driverEmail: driverEmail.trim().toLowerCase(),
+        completedAt: new Date().toISOString(),
+        status: 'completed'
+      }])
+      .select()
+      .single();
 
-    if (insertError) return res.status(500).json({ error: 'Failed to save completed job' });
+    if (insertError) {
+      console.error('Error saving completed job:', insertError);
+      return res.status(500).json({ error: 'Failed to save completed job' });
+    }
 
-    await supabase.from('pending_jobs').delete().eq('id', jobId);
+    // Delete from pending_jobs
+    const { error: deleteError } = await supabase
+      .from('pending_jobs')
+      .delete()
+      .eq('id', jobId);
 
-    res.json({ success: true, message: 'Job completed' });
+    if (deleteError) {
+      console.error('Error deleting pending job:', deleteError);
+      return res.status(500).json({ error: 'Completed job saved, but failed to remove from pending' });
+    }
+
+    res.json({ success: true, message: 'Job completed', completedJobId: insertedJob.id });
   } catch (err) {
     console.error('Complete job error:', err);
     res.status(500).json({ error: 'Server error completing job' });
@@ -603,6 +617,26 @@ app.get('/completed-jobs', async (req, res) => {
   } catch (err) {
     console.error('Fetch completed jobs error:', err);
     res.status(500).json({ error: 'Server error fetching completed jobs' });
+  }
+});
+
+// ------------------- REFUSE JOB -------------------
+app.post('/refuse-job', async (req, res) => {
+  try {
+    const { jobId } = req.body;
+    if (!jobId) return res.status(400).json({ error: 'Missing jobId' });
+
+    const { error } = await supabase
+      .from('pending_jobs')
+      .update({ status: 'pending', assignedto: null })
+      .eq('id', jobId);
+
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Job refused, back to pending' });
+  } catch (err) {
+    console.error('Refuse job error:', err);
+    res.status(500).json({ error: 'Failed to refuse job' });
   }
 });
 
