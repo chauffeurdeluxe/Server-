@@ -20,6 +20,88 @@ const supabase = createClient(
 const app = express();
 app.use(cors());
 app.use(express.static('public'));
+
+/* ------------------- STRIPE WEBHOOK ------------------- */
+// Important: put this ABOVE app.use(express.json())
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('❌ Webhook signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  console.log("✅ Webhook received:", event.type);
+
+  if (event.type === 'checkout.session.completed') {
+    const s = event.data.object;
+    console.log("🔔 Checkout session:", s);
+
+    const bookingId = Date.now().toString();
+    const booking = {
+      id: bookingId,
+      name: s.metadata.name,
+      email: s.metadata.email,
+      phone: s.metadata.phone,
+      pickup: s.metadata.pickup,
+      dropoff: s.metadata.dropoff,
+      datetime: s.metadata.datetime,
+      vehicleType: s.metadata.vehicleType,
+      totalFare: parseFloat(s.metadata.totalFare),
+      distanceKm: s.metadata.distanceKm,
+      durationMin: s.metadata.durationMin,
+      notes: s.metadata.notes || ''
+    };
+
+    try {
+      const { error } = await supabase.from('pending_jobs').insert([{
+        id: booking.id,
+        customername: booking.name,
+        customeremail: booking.email,
+        customerphone: booking.phone,
+        pickup: booking.pickup,
+        dropoff: booking.dropoff,
+        pickuptime: booking.datetime,
+        vehicletype: booking.vehicleType,
+        fare: booking.totalFare,
+        status: 'pending',
+        createdat: new Date(),
+        distance_km: booking.distanceKm,
+        duration_min: booking.durationMin,
+        notes: booking.notes,
+        assignedto: null
+      }]);
+
+      if (error) {
+        console.error("❌ Supabase insert error:", error.message);
+      } else {
+        console.log("✅ Booking inserted into Supabase:", booking.id);
+      }
+    } catch (err) {
+      console.error("❌ Exception inserting booking:", err);
+    }
+
+    try {
+      await sendEmail(booking);
+      console.log("✅ Notification email sent");
+    } catch (err) {
+      console.error("❌ Email error:", err);
+    }
+
+    try {
+      await sendInvoicePDF(booking, s.id);
+      console.log("✅ Invoice sent");
+    } catch (err) {
+      console.error("❌ Invoice error:", err);
+    }
+  }
+
+  res.json({ received: true });
+});
+
 app.use(bodyParser.json());
 
 /* ------------------- NODEMAILER ------------------- */
@@ -141,87 +223,6 @@ app.post('/create-checkout-session', async (req, res) => {
     console.error('Stripe session creation error:', err);
     res.status(500).json({ error: 'Stripe session creation failed.' });
   }
-});
-
-/* ------------------- STRIPE WEBHOOK ------------------- */
-// Important: put this ABOVE app.use(express.json())
-app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.error('❌ Webhook signature verification failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  console.log("✅ Webhook received:", event.type);
-
-  if (event.type === 'checkout.session.completed') {
-    const s = event.data.object;
-    console.log("🔔 Checkout session:", s);
-
-    const bookingId = Date.now().toString();
-    const booking = {
-      id: bookingId,
-      name: s.metadata.name,
-      email: s.metadata.email,
-      phone: s.metadata.phone,
-      pickup: s.metadata.pickup,
-      dropoff: s.metadata.dropoff,
-      datetime: s.metadata.datetime,
-      vehicleType: s.metadata.vehicleType,
-      totalFare: parseFloat(s.metadata.totalFare),
-      distanceKm: s.metadata.distanceKm,
-      durationMin: s.metadata.durationMin,
-      notes: s.metadata.notes || ''
-    };
-
-    try {
-      const { error } = await supabase.from('pending_jobs').insert([{
-        id: booking.id,
-        customername: booking.name,
-        customeremail: booking.email,
-        customerphone: booking.phone,
-        pickup: booking.pickup,
-        dropoff: booking.dropoff,
-        pickuptime: booking.datetime,
-        vehicletype: booking.vehicleType,
-        fare: booking.totalFare,
-        status: 'pending',
-        createdat: new Date(),
-        distance_km: booking.distanceKm,
-        duration_min: booking.durationMin,
-        notes: booking.notes,
-        assignedto: null
-      }]);
-
-      if (error) {
-        console.error("❌ Supabase insert error:", error.message);
-      } else {
-        console.log("✅ Booking inserted into Supabase:", booking.id);
-      }
-    } catch (err) {
-      console.error("❌ Exception inserting booking:", err);
-    }
-
-    try {
-      await sendEmail(booking);
-      console.log("✅ Notification email sent");
-    } catch (err) {
-      console.error("❌ Email error:", err);
-    }
-
-    try {
-      await sendInvoicePDF(booking, s.id);
-      console.log("✅ Invoice sent");
-    } catch (err) {
-      console.error("❌ Invoice error:", err);
-    }
-  }
-
-  res.json({ received: true });
 });
 
 /* ------------------- EMAIL & PDF FUNCTIONS ------------------- */
