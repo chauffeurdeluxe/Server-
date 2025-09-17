@@ -430,86 +430,60 @@ app.get('/driver-jobs', async (req, res) => {
   }
 });
 
-/* ------------------- UPDATE JOB STATUS ------------------- */
 app.post('/update-job', async (req, res) => {
   try {
     const { jobId, status, driverEmail } = req.body;
 
-    if (!jobId || !status || !driverEmail) {
-      return res.status(400).json({ error: 'Missing jobId, status, or driverEmail' });
-    }
-
-    const emailLower = driverEmail.trim().toLowerCase();
-
-    // Fetch the job from pending_jobs
-    const { data: job, error: fetchError } = await supabase
+    // Fetch the job from assigned_jobs or pending_jobs
+    const { data: jobData, error: fetchError } = await supabase
       .from('pending_jobs')
       .select('*')
       .eq('id', jobId)
       .single();
 
-    if (fetchError || !job) {
-      return res.status(404).json({ error: 'Job not found' });
-    }
+    if (fetchError || !jobData) return res.status(404).json({ error: 'Job not found' });
 
     if (status === 'confirmed') {
-      // Just update status to confirmed, do NOT move anywhere
-      const { error: updateError } = await supabase
+      // Update status to confirmed, keep assigned to driver
+      const { error } = await supabase
         .from('pending_jobs')
-        .update({ status })
+        .update({ status: 'confirmed', assignedto: driverEmail })
         .eq('id', jobId);
-
-      if (updateError) throw updateError;
-
-      return res.json({ success: true, message: 'Job confirmed' });
-    }
-
-    if (status === 'refused') {
-      // Move job back to pending / unassign
-      const { error: updateError } = await supabase
-        .from('pending_jobs')
-        .update({ status: 'pending', assignedto: null })
-        .eq('id', jobId);
-
-      if (updateError) throw updateError;
-
-      return res.json({ success: true, message: 'Job refused' });
+      if (error) throw error;
     }
 
     if (status === 'completed') {
-      // Move job to completed_jobs
-      const completedData = {
-        ...job,
-        driverEmail: emailLower,
-        completedAt: new Date(),
-        status: 'completed'
-      };
-
-      // Remove fields that might conflict with completed_jobs schema
-      delete completedData.id;
-      delete completedData.assignedat;
-
+      // Move to completed_jobs
       const { error: insertError } = await supabase
         .from('completed_jobs')
-        .insert([completedData]);
-
+        .insert([{
+          ...jobData,
+          driverEmail,
+          completedAt: new Date().toISOString()
+        }]);
       if (insertError) throw insertError;
 
-      // Delete from pending_jobs
+      // Remove from pending_jobs
       const { error: deleteError } = await supabase
         .from('pending_jobs')
         .delete()
         .eq('id', jobId);
-
       if (deleteError) throw deleteError;
-
-      return res.json({ success: true, message: 'Job completed' });
     }
 
-    res.status(400).json({ error: 'Invalid status' });
+    if (status === 'refused') {
+      // Move back to pending (unassign)
+      const { error } = await supabase
+        .from('pending_jobs')
+        .update({ status: 'pending', assignedto: null })
+        .eq('id', jobId);
+      if (error) throw error;
+    }
+
+    res.json({ success: true });
   } catch (err) {
-    console.error('Update job error:', err);
-    res.status(500).json({ error: 'Server error updating job' });
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update job' });
   }
 });
 
