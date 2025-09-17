@@ -143,39 +143,40 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-/* ------------------- STRIPE WEBHOOK ------------------- */
-app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+// ------------------- STRIPE WEBHOOK -------------------
+app.post('/webhook', bodyParser.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
-  let event;
 
+  let event;
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
+    console.error('⚠️ Webhook signature verification failed.', err.message);
+    return res.sendStatus(400);
   }
 
   if (event.type === 'checkout.session.completed') {
-    const s = event.data.object;
-    const bookingId = Date.now().toString();
+    const session = event.data.object;
 
+    // ✅ Booking details from Stripe metadata
     const booking = {
-      id: bookingId,
-      name: s.metadata.name,
-      email: s.metadata.email,
-      phone: s.metadata.phone,
-      pickup: s.metadata.pickup,
-      dropoff: s.metadata.dropoff,
-      datetime: s.metadata.datetime,
-      vehicleType: s.metadata.vehicleType,
-      totalFare: parseFloat(s.metadata.totalFare),
-      distanceKm: s.metadata.distanceKm,
-      durationMin: s.metadata.durationMin,
-      notes: s.metadata.notes || ''
+      id: session.id,
+      name: session.metadata.name,
+      email: session.metadata.email,
+      phone: session.metadata.phone,
+      pickup: session.metadata.pickup,
+      dropoff: session.metadata.dropoff,
+      datetime: session.metadata.datetime,
+      vehicleType: session.metadata.vehicleType,
+      totalFare: session.amount_total / 100, // convert cents to dollars
+      distanceKm: session.metadata.distanceKm,
+      durationMin: session.metadata.durationMin,
+      notes: session.metadata.notes || null,
     };
 
     try {
-      await supabase.from('pending_jobs').insert([{
+      // ✅ Insert into Supabase pending_jobs
+      const { error: dbError } = await supabase.from('pending_jobs').insert([{
         id: booking.id,
         customername: booking.name,
         customeremail: booking.email,
@@ -192,16 +193,31 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         notes: booking.notes,
         assignedto: null
       }]);
-      console.log('✅ Booking inserted into Supabase pending_jobs:', booking.id);
-    } catch (err) {
-      console.error('Supabase pending_jobs insert error:', err);
-    }
 
-    sendEmail(booking).catch(console.error);
-    sendInvoicePDF(booking, s.id).catch(console.error);
+      if (dbError) console.error('❌ Supabase insert failed:', dbError);
+
+      // ✅ Send email to YOU (notification)
+      await transporter.sendMail({
+        from: '"Chauffeur de Luxe" <chauffeurdeluxe@yahoo.com>',
+        to: 'chauffeurdeluxe@yahoo.com',
+        subject: '🚖 New Booking Received',
+        text: `New booking from ${booking.name}. Pickup: ${booking.pickup}, Dropoff: ${booking.dropoff}, Time: ${booking.datetime}, Fare: $${booking.totalFare}.`
+      });
+
+      // ✅ Send email to CLIENT (invoice/confirmation)
+      await transporter.sendMail({
+        from: '"Chauffeur de Luxe" <chauffeurdeluxe@yahoo.com>',
+        to: booking.email,
+        subject: '✅ Chauffeur de Luxe Booking Confirmation',
+        text: `Dear ${booking.name},\n\nYour booking is confirmed.\n\nPickup: ${booking.pickup}\nDropoff: ${booking.dropoff}\nDate & Time: ${booking.datetime}\nVehicle: ${booking.vehicleType}\nFare: $${booking.totalFare}\n\nThank you for choosing Chauffeur de Luxe.`
+      });
+
+    } catch (err) {
+      console.error('❌ Error handling webhook:', err.message);
+    }
   }
 
-  res.json({ received: true });
+  res.sendStatus(200);
 });
 
 /* ------------------- EMAIL & PDF FUNCTIONS ------------------- */
