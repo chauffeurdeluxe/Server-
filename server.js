@@ -436,9 +436,9 @@ app.post('/assign-job', async (req, res) => {
   try {
     const { driverEmail, bookingData, bookingId } = req.body;
 
-    // Accept bookingData.id if bookingId not provided
     const idToAssign = bookingId || (bookingData && bookingData.id);
-    if (!driverEmail || !idToAssign) return res.status(400).json({ error: 'Missing driverEmail or bookingId' });
+    if (!driverEmail || !idToAssign) 
+      return res.status(400).json({ error: 'Missing driverEmail or bookingId' });
 
     const { data: booking, error: bookingError } = await supabase
       .from('pending_jobs')
@@ -446,12 +446,24 @@ app.post('/assign-job', async (req, res) => {
       .eq('id', idToAssign)
       .single();
 
-    if (bookingError || !booking) return res.status(404).json({ error: 'Booking not found' });
+    if (bookingError || !booking) 
+      return res.status(404).json({ error: 'Booking not found' });
 
-    await supabase
+    const { data: updatedBooking, error: updateError } = await supabase
       .from('pending_jobs')
-      .update({ assignedto: driverEmail.trim().toLowerCase() })
-      .eq('id', idToAssign);
+      .update({
+        assignedto: driverEmail.trim().toLowerCase(),
+        status: 'assigned',
+        assignedat: new Date()
+      })
+      .eq('id', idToAssign)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error('Error updating booking:', updateError);
+      return res.status(500).json({ error: 'Failed to assign job' });
+    }
 
     res.json({ success: true, message: 'Job assigned to driver', jobId: idToAssign });
   } catch (err) {
