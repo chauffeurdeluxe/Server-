@@ -22,7 +22,6 @@ app.use(cors());
 app.use(express.static('public'));
 
 /* ------------------- STRIPE WEBHOOK ------------------- */
-// Important: put this ABOVE app.use(express.json())
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
@@ -51,8 +50,8 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       datetime: s.metadata.datetime,
       vehicleType: s.metadata.vehicleType,
       totalFare: parseFloat(s.metadata.totalFare),
-      distanceKm: s.metadata.distanceKm,
-      durationMin: s.metadata.durationMin,
+      distanceKm: parseFloat(s.metadata.distanceKm) || 0,
+      durationMin: parseFloat(s.metadata.durationMin) || 0,
       notes: s.metadata.notes || ''
     };
 
@@ -84,19 +83,12 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       console.error("❌ Exception inserting booking:", err);
     }
 
-    try {
-      await sendEmail(booking);
-      console.log("✅ Notification email sent");
-    } catch (err) {
-      console.error("❌ Email error:", err);
-    }
+    // Send email + invoice as before
+    try { await sendEmail(booking); console.log("✅ Notification email sent"); } 
+    catch (err) { console.error("❌ Email error:", err); }
 
-    try {
-      await sendInvoicePDF(booking, s.id);
-      console.log("✅ Invoice sent");
-    } catch (err) {
-      console.error("❌ Invoice error:", err);
-    }
+    try { await sendInvoicePDF(booking, s.id); console.log("✅ Invoice sent"); } 
+    catch (err) { console.error("❌ Invoice error:", err); }
   }
 
   res.json({ received: true });
@@ -422,16 +414,36 @@ app.get('/driver-jobs', async (req, res) => {
   }
 });
 
+/* ------------------- GET PENDING BOOKINGS FOR ADMIN ------------------- */
+app.get('/pending-bookings', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('pending_jobs')
+      .select('*')
+      .order('createdat', { ascending: true });
+
+    if (error) return res.status(500).json({ error: 'Failed to fetch pending bookings' });
+
+    res.json(data);
+  } catch (err) {
+    console.error('Fetch pending bookings error:', err);
+    res.status(500).json({ error: 'Server error fetching pending bookings' });
+  }
+});
+
 /* ------------------- ASSIGN JOB ------------------- */
 app.post('/assign-job', async (req, res) => {
   try {
-    const { driverEmail, bookingId } = req.body;
-    if (!driverEmail || !bookingId) return res.status(400).json({ error: 'Missing driverEmail or bookingId' });
+    const { driverEmail, bookingData, bookingId } = req.body;
+
+    // Accept bookingData.id if bookingId not provided
+    const idToAssign = bookingId || (bookingData && bookingData.id);
+    if (!driverEmail || !idToAssign) return res.status(400).json({ error: 'Missing driverEmail or bookingId' });
 
     const { data: booking, error: bookingError } = await supabase
       .from('pending_jobs')
       .select('*')
-      .eq('id', bookingId)
+      .eq('id', idToAssign)
       .single();
 
     if (bookingError || !booking) return res.status(404).json({ error: 'Booking not found' });
@@ -439,9 +451,9 @@ app.post('/assign-job', async (req, res) => {
     await supabase
       .from('pending_jobs')
       .update({ driverEmail: driverEmail.trim().toLowerCase() })
-      .eq('id', bookingId);
+      .eq('id', idToAssign);
 
-    res.json({ success: true, message: 'Job assigned to driver' });
+    res.json({ success: true, message: 'Job assigned to driver', jobId: idToAssign });
   } catch (err) {
     console.error('Assign job error:', err);
     res.status(500).json({ error: 'Server error assigning job' });
