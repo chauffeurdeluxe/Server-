@@ -190,7 +190,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         distance_km: booking.distanceKm,
         duration_min: booking.durationMin,
         notes: booking.notes,
-        driverEmail: null // important fix for driver job assignment
+        assignedto: null
       }]);
       console.log('✅ Booking inserted into Supabase pending_jobs:', booking.id);
     } catch (err) {
