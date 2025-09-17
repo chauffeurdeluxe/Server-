@@ -452,8 +452,8 @@ app.post('/update-job', async (req, res) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (status === 'confirmed' || status === 'refused') {
-      // Simply update status in pending_jobs
+    if (status === 'confirmed') {
+      // Just update status to confirmed, do NOT move anywhere
       const { error: updateError } = await supabase
         .from('pending_jobs')
         .update({ status })
@@ -461,11 +461,23 @@ app.post('/update-job', async (req, res) => {
 
       if (updateError) throw updateError;
 
-      return res.json({ success: true, message: `Job ${status}` });
+      return res.json({ success: true, message: 'Job confirmed' });
+    }
+
+    if (status === 'refused') {
+      // Move job back to pending / unassign
+      const { error: updateError } = await supabase
+        .from('pending_jobs')
+        .update({ status: 'pending', assignedto: null })
+        .eq('id', jobId);
+
+      if (updateError) throw updateError;
+
+      return res.json({ success: true, message: 'Job refused' });
     }
 
     if (status === 'completed') {
-      // Move job from pending_jobs to completed_jobs
+      // Move job to completed_jobs
       const completedData = {
         ...job,
         driverEmail: emailLower,
@@ -473,7 +485,10 @@ app.post('/update-job', async (req, res) => {
         status: 'completed'
       };
 
-      // Insert into completed_jobs
+      // Remove fields that might conflict with completed_jobs schema
+      delete completedData.id;
+      delete completedData.assignedat;
+
       const { error: insertError } = await supabase
         .from('completed_jobs')
         .insert([completedData]);
@@ -492,7 +507,6 @@ app.post('/update-job', async (req, res) => {
     }
 
     res.status(400).json({ error: 'Invalid status' });
-
   } catch (err) {
     console.error('Update job error:', err);
     res.status(500).json({ error: 'Server error updating job' });
