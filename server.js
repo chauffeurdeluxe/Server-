@@ -430,30 +430,32 @@ app.get('/driver-jobs', async (req, res) => {
   }
 });
 
+// UPDATE JOB STATUS
 app.post('/update-job', async (req, res) => {
   try {
     const { jobId, status, driverEmail } = req.body;
-
-    // Fetch the job from assigned_jobs or pending_jobs
-    const { data: jobData, error: fetchError } = await supabase
-      .from('pending_jobs')
-      .select('*')
-      .eq('id', jobId)
-      .single();
-
-    if (fetchError || !jobData) return res.status(404).json({ error: 'Job not found' });
+    if (!jobId || !status || !driverEmail) return res.status(400).json({ error: 'Missing parameters' });
 
     if (status === 'confirmed') {
-      // Update status to confirmed, keep assigned to driver
+      // Keep job assigned and confirmed
       const { error } = await supabase
         .from('pending_jobs')
         .update({ status: 'confirmed', assignedto: driverEmail })
         .eq('id', jobId);
       if (error) throw error;
+      return res.json({ success: true });
     }
 
     if (status === 'completed') {
-      // Move to completed_jobs
+      // Fetch job from pending
+      const { data: jobData, error: fetchError } = await supabase
+        .from('pending_jobs')
+        .select('*')
+        .eq('id', jobId)
+        .single();
+      if (fetchError || !jobData) return res.status(404).json({ error: 'Job not found' });
+
+      // Insert into completed_jobs
       const { error: insertError } = await supabase
         .from('completed_jobs')
         .insert([{
@@ -463,26 +465,30 @@ app.post('/update-job', async (req, res) => {
         }]);
       if (insertError) throw insertError;
 
-      // Remove from pending_jobs
+      // Delete from pending_jobs after successful insert
       const { error: deleteError } = await supabase
         .from('pending_jobs')
         .delete()
         .eq('id', jobId);
       if (deleteError) throw deleteError;
+
+      return res.json({ success: true });
     }
 
     if (status === 'refused') {
-      // Move back to pending (unassign)
+      // Move back to pending if refused
       const { error } = await supabase
         .from('pending_jobs')
         .update({ status: 'pending', assignedto: null })
         .eq('id', jobId);
       if (error) throw error;
+      return res.json({ success: true });
     }
 
-    res.json({ success: true });
+    res.status(400).json({ error: 'Invalid status' });
+
   } catch (err) {
-    console.error(err);
+    console.error('Update job error:', err);
     res.status(500).json({ error: 'Failed to update job' });
   }
 });
