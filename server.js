@@ -516,37 +516,68 @@ app.post('/assign-job', async (req, res) => {
   try {
     const { driverEmail, bookingId } = req.body;
 
-    if (!driverEmail || !bookingId) 
+    if (!driverEmail || !bookingId) {
       return res.status(400).json({ error: 'Missing driverEmail or bookingId' });
+    }
 
-    // Check if booking exists
+    // 1. Check booking exists in pending_jobs
     const { data: booking, error: bookingError } = await supabase
       .from('pending_jobs')
       .select('*')
       .eq('id', bookingId)
       .single();
 
-    if (bookingError || !booking) 
+    if (bookingError || !booking) {
       return res.status(404).json({ error: 'Booking not found' });
+    }
 
-    // Update booking to assigned
-    const { data: updatedBooking, error: updateError } = await supabase
+    // 2. Update booking → mark as assigned
+    const { error: updateError } = await supabase
       .from('pending_jobs')
       .update({
         assignedto: driverEmail.trim().toLowerCase(),
         status: 'assigned',
         assignedat: new Date()
       })
-      .eq('id', bookingId)
-      .select()
-      .single();
+      .eq('id', bookingId);
 
     if (updateError) {
       console.error('Error assigning booking:', updateError);
       return res.status(500).json({ error: 'Failed to assign job' });
     }
 
-    res.json({ success: true, message: `Job assigned to ${driverEmail}`, jobId: bookingId });
+    // 3. Send email to driver
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+
+    const mailOptions = {
+      from: `"Chauffeur de Luxe" <${process.env.EMAIL_USER}>`,
+      to: driverEmail,
+      subject: '🚘 New Job Assigned',
+      text: `
+Hello,
+
+You have been assigned a new job:
+
+Pickup: ${booking.pickup}
+Dropoff: ${booking.dropoff}
+Date & Time: ${new Date(booking.pickuptime).toLocaleString()}
+Customer: ${booking.customername}
+Fare: $${booking.fare}
+
+Please log in to your driver portal to confirm.
+      `
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.json({ success: true, message: `Job assigned to ${driverEmail}` });
+
   } catch (err) {
     console.error('Assign job error:', err);
     res.status(500).json({ error: 'Server error assigning job' });
