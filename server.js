@@ -391,7 +391,7 @@ app.get('/driver-jobs', async (req, res) => {
     const { data: assignedJobs, error: assignedError } = await supabase
       .from('pending_jobs')
       .select('*')
-      .eq('assignedto', email)
+      .eq('assignedto', email.toLowerCase())
       .eq('status', 'assigned')
       .order('pickuptime', { ascending: true });
 
