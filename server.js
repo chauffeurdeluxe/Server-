@@ -453,39 +453,52 @@ app.get('/driver-jobs', async (req, res) => {
   }
 });
 
-// UPDATE JOB STATUS
+// ------------------- UPDATE JOB -------------------
 app.post('/update-job', async (req, res) => {
   try {
     const { jobId, status, driverEmail } = req.body;
-    if (!jobId || !status || !driverEmail) return res.status(400).json({ error: 'Missing parameters' });
+    if (!jobId || !status || !driverEmail) {
+      return res.status(400).json({ error: 'Missing parameters' });
+    }
+
+    const email = driverEmail.trim().toLowerCase();
+
+    // Fetch the job from pending_jobs
+    const { data: jobData, error: fetchError } = await supabase
+      .from('pending_jobs')
+      .select('*')
+      .eq('id', jobId)
+      .single();
+
+    if (fetchError || !jobData) return res.status(404).json({ error: 'Job not found' });
 
     if (status === 'confirmed') {
-      // Keep job assigned and confirmed
-      const { error } = await supabase
+      // Confirm job without changing assignment
+      const { error: confirmError } = await supabase
         .from('pending_jobs')
-        .update({ status: 'confirmed', assignedto: driverEmail })
+        .update({ status: 'confirmed', assignedto: email })
         .eq('id', jobId);
-      if (error) throw error;
+      if (confirmError) throw confirmError;
+
       return res.json({ success: true });
     }
 
     if (status === 'completed') {
-      // Fetch job from pending
-      const { data: jobData, error: fetchError } = await supabase
-        .from('pending_jobs')
-        .select('*')
-        .eq('id', jobId)
-        .single();
-      if (fetchError || !jobData) return res.status(404).json({ error: 'Job not found' });
+      // Move job to completed_jobs with driverPay
+      const driverPay = calculateDriverPayout(jobData.fare);
 
-      // Insert into completed_jobs
-      const { error: insertError } = await supabase
+      const { data: insertedJob, error: insertError } = await supabase
         .from('completed_jobs')
         .insert([{
           ...jobData,
-          driverEmail,
-          completedAt: new Date().toISOString()
-        }]);
+          driverEmail: email,
+          driverPay,
+          completedAt: new Date().toISOString(),
+          status: 'completed'
+        }])
+        .select()
+        .single();
+
       if (insertError) throw insertError;
 
       // Delete from pending_jobs after successful insert
@@ -495,16 +508,17 @@ app.post('/update-job', async (req, res) => {
         .eq('id', jobId);
       if (deleteError) throw deleteError;
 
-      return res.json({ success: true });
+      return res.json({ success: true, completedJobId: insertedJob.id });
     }
 
     if (status === 'refused') {
-      // Move back to pending if refused
-      const { error } = await supabase
+      // Reset job to pending if refused
+      const { error: refuseError } = await supabase
         .from('pending_jobs')
         .update({ status: 'pending', assignedto: null })
         .eq('id', jobId);
-      if (error) throw error;
+      if (refuseError) throw refuseError;
+
       return res.json({ success: true });
     }
 
@@ -610,13 +624,15 @@ await transporter.sendMail(mailOptions);
   }
 });
 
-// ------------------- COMPLETE JOB -------------------
+// ------------------- COMPLETE JOB (standalone) -------------------
 app.post('/complete-job', async (req, res) => {
   try {
     const { jobId, driverEmail } = req.body;
     if (!jobId || !driverEmail) return res.status(400).json({ error: 'Missing jobId or driverEmail' });
 
-    // Fetch job from pending
+    const email = driverEmail.trim().toLowerCase();
+
+    // Fetch job from pending_jobs
     const { data: job, error: jobError } = await supabase
       .from('pending_jobs')
       .select('*')
@@ -625,22 +641,23 @@ app.post('/complete-job', async (req, res) => {
 
     if (jobError || !job) return res.status(404).json({ error: 'Job not found' });
 
+    // Calculate driverPay
+    const driverPay = calculateDriverPayout(job.fare);
+
     // Insert into completed_jobs
     const { data: insertedJob, error: insertError } = await supabase
       .from('completed_jobs')
       .insert([{
         ...job,
-        driverEmail: driverEmail.trim().toLowerCase(),
+        driverEmail: email,
+        driverPay,
         completedAt: new Date().toISOString(),
         status: 'completed'
       }])
       .select()
       .single();
 
-    if (insertError) {
-      console.error('Error saving completed job:', insertError);
-      return res.status(500).json({ error: 'Failed to save completed job' });
-    }
+    if (insertError) throw insertError;
 
     // Delete from pending_jobs
     const { error: deleteError } = await supabase
@@ -649,7 +666,7 @@ app.post('/complete-job', async (req, res) => {
       .eq('id', jobId);
 
     if (deleteError) {
-      console.error('Error deleting pending job:', deleteError);
+      console.error('Completed job saved, but failed to remove from pending:', deleteError);
       return res.status(500).json({ error: 'Completed job saved, but failed to remove from pending' });
     }
 
