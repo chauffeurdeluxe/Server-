@@ -381,7 +381,7 @@ app.post('/driver-login', async (req, res) => {
   }
 });
 
-// GET driver jobs with driver payout
+// GET driver jobs with driver payout and customer info
 app.get('/driver-jobs', async (req, res) => {
   try {
     const email = req.query.email?.trim().toLowerCase();
@@ -393,7 +393,7 @@ app.get('/driver-jobs', async (req, res) => {
     const { data: assignedJobs, error: assignedError } = await supabase
       .from('pending_jobs')
       .select('*')
-      .eq('assignedto', email.toLowerCase())
+      .eq('assignedto', email)
       .eq('status', 'assigned')
       .order('pickuptime', { ascending: true });
 
@@ -406,7 +406,7 @@ app.get('/driver-jobs', async (req, res) => {
     const { data: completedJobs, error: completedError } = await supabase
       .from('completed_jobs')
       .select('*')
-      .eq('driverEmail', email.toLowerCase())
+      .eq('driverEmail', email)
       .order('completedAt', { ascending: false });
 
     if (completedError) {
@@ -414,7 +414,7 @@ app.get('/driver-jobs', async (req, res) => {
       return res.status(500).json({ error: 'Failed to fetch completed jobs' });
     }
 
-    // Calculate driver payout for assigned and completed jobs
+    // Map assigned jobs with driver pay and customer info
     const assignedWithPayout = (assignedJobs || []).map(job => ({
       id: job.id,
       pickup: job.pickup,
@@ -425,9 +425,12 @@ app.get('/driver-jobs', async (req, res) => {
       notes: job.notes,
       distance_km: job.distance_km,
       duration_min: job.duration_min,
-      status: job.status
+      status: job.status,
+      customername: job.customername,   // added
+      customerphone: job.customerphone  // added
     }));
 
+    // Map completed jobs with driver pay and customer info
     const completedWithPayout = (completedJobs || []).map(job => ({
       id: job.id,
       pickup: job.pickup,
@@ -438,7 +441,9 @@ app.get('/driver-jobs', async (req, res) => {
       notes: job.notes,
       distance_km: job.distance_km,
       duration_min: job.duration_min,
-      status: job.status
+      status: job.status,
+      customername: job.customername,   // added
+      customerphone: job.customerphone  // added
     }));
 
     res.json({ assignedJobs: assignedWithPayout, completedJobs: completedWithPayout });
@@ -564,14 +569,22 @@ app.post('/assign-job', async (req, res) => {
       return res.status(500).json({ error: 'Failed to assign job' });
     }
 
-    // 3. Send email to driver (only their pay)
-    const driverPay = calculateDriverPayout(booking.fare);
+ // 3. Send email to driver with driver pay only
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
 
-    const mailOptions = {
-      from: `"Chauffeur de Luxe" <${process.env.EMAIL_USER}>`,
-      to: driverEmail,
-      subject: '🚘 New Job Assigned',
-      text: `
+const driverPay = calculateDriverPayout(booking.fare);
+
+const mailOptions = {
+  from: `"Chauffeur de Luxe" <${process.env.EMAIL_USER}>`,
+  to: driverEmail,
+  subject: '🚘 New Job Assigned',
+  text: `
 Hello,
 
 You have been assigned a new job:
@@ -580,13 +593,14 @@ Pickup: ${booking.pickup}
 Dropoff: ${booking.dropoff}
 Date & Time: ${new Date(booking.pickuptime).toLocaleString()}
 Customer: ${booking.customername}
+Customer Phone: ${booking.customerphone}
 Your Pay: $${driverPay}
 
 Please log in to your driver portal to confirm.
-      `
-    };
+  `
+};
 
-    await transporter.sendMail(mailOptions);
+await transporter.sendMail(mailOptions);
 
     res.json({ success: true, message: `Job assigned to ${driverEmail}` });
 
