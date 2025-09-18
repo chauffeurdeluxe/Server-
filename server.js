@@ -389,7 +389,7 @@ app.get('/driver-jobs', async (req, res) => {
 
     console.log('Driver email requested:', email); // debug
 
-    // Assigned jobs from pending_jobs
+    // Assigned jobs from pending_jobs (driverPay calculated on assignment)
     const { data: assignedJobs, error: assignedError } = await supabase
       .from('pending_jobs')
       .select('*')
@@ -402,7 +402,7 @@ app.get('/driver-jobs', async (req, res) => {
       return res.status(500).json({ error: 'Failed to fetch assigned jobs' });
     }
 
-    // Completed jobs from completed_jobs
+    // Completed jobs from completed_jobs (driverPay read from DB)
     const { data: completedJobs, error: completedError } = await supabase
       .from('completed_jobs')
       .select('*')
@@ -414,36 +414,37 @@ app.get('/driver-jobs', async (req, res) => {
       return res.status(500).json({ error: 'Failed to fetch completed jobs' });
     }
 
-    // Map assigned jobs with driver pay and customer info
+    // Map assigned jobs with driverPay calculated for preview (optional)
     const assignedWithPayout = (assignedJobs || []).map(job => ({
       id: job.id,
       pickup: job.pickup,
       dropoff: job.dropoff,
       pickuptime: job.pickuptime,
       vehicletype: job.vehicletype,
-      driverPay: calculateDriverPayout(job.fare),
+      driverPay: calculateDriverPayout(job.fare), // optional for assigned jobs
       notes: job.notes,
       distance_km: job.distance_km,
       duration_min: job.duration_min,
       status: job.status,
-      customername: job.customername,   // added
-      customerphone: job.customerphone  // added
+      customername: job.customername,
+      customerphone: job.customerphone
     }));
 
-    // Map completed jobs with driver pay and customer info
+    // Map completed jobs using stored driverPay
     const completedWithPayout = (completedJobs || []).map(job => ({
       id: job.id,
       pickup: job.pickup,
       dropoff: job.dropoff,
       pickuptime: job.pickuptime,
       vehicletype: job.vehicletype,
-      driverPay: calculateDriverPayout(job.fare),
+      driverPay: job.driverPay,  // use stored value
       notes: job.notes,
       distance_km: job.distance_km,
       duration_min: job.duration_min,
       status: job.status,
-      customername: job.customername,   // added
-      customerphone: job.customerphone  // added
+      customername: job.customername,
+      customerphone: job.customerphone,
+      completedAt: job.completedAt
     }));
 
     res.json({ assignedJobs: assignedWithPayout, completedJobs: completedWithPayout });
