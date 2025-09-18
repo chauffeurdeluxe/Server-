@@ -387,11 +387,13 @@ app.get('/driver-jobs', async (req, res) => {
     const email = req.query.email?.trim().toLowerCase();
     if (!email) return res.status(400).json({ error: 'Driver email is required' });
 
+    console.log('Driver email requested:', email); // debug
+
     // Assigned jobs from pending_jobs
     const { data: assignedJobs, error: assignedError } = await supabase
       .from('pending_jobs')
       .select('*')
-      .eq('assignedto', email.toLowerCase())
+      .eq('assignedto', email)
       .eq('status', 'assigned')
       .order('pickuptime', { ascending: true });
 
@@ -414,13 +416,29 @@ app.get('/driver-jobs', async (req, res) => {
 
     // Calculate driver payout for assigned and completed jobs
     const assignedWithPayout = (assignedJobs || []).map(job => ({
-      ...job,
-      driverPay: calculateDriverPayout(job.fare)
+      id: job.id,
+      pickup: job.pickup,
+      dropoff: job.dropoff,
+      pickuptime: job.pickuptime,
+      vehicletype: job.vehicletype,
+      driverPay: calculateDriverPayout(job.fare),
+      notes: job.notes,
+      distance_km: job.distance_km,
+      duration_min: job.duration_min,
+      status: job.status
     }));
 
     const completedWithPayout = (completedJobs || []).map(job => ({
-      ...job,
-      driverPay: calculateDriverPayout(job.fare)
+      id: job.id,
+      pickup: job.pickup,
+      dropoff: job.dropoff,
+      pickuptime: job.pickuptime,
+      vehicletype: job.vehicletype,
+      driverPay: calculateDriverPayout(job.fare),
+      notes: job.notes,
+      distance_km: job.distance_km,
+      duration_min: job.duration_min,
+      status: job.status
     }));
 
     res.json({ assignedJobs: assignedWithPayout, completedJobs: completedWithPayout });
@@ -546,20 +564,20 @@ app.post('/assign-job', async (req, res) => {
       return res.status(500).json({ error: 'Failed to assign job' });
     }
 
-    // 3. Send email to driver
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
+// 3. Send email to driver
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
 
-    const mailOptions = {
-      from: `"Chauffeur de Luxe" <${process.env.EMAIL_USER}>`,
-      to: driverEmail,
-      subject: '🚘 New Job Assigned',
-      text: `
+const mailOptions = {
+  from: `"Chauffeur de Luxe" <${process.env.EMAIL_USER}>`,
+  to: driverEmail,
+  subject: '🚘 New Job Assigned',
+  text: `
 Hello,
 
 You have been assigned a new job:
@@ -571,10 +589,10 @@ Customer: ${booking.customername}
 Fare: $${booking.fare}
 
 Please log in to your driver portal to confirm.
-      `
-    };
+  `
+};
 
-    await transporter.sendMail(mailOptions);
+await transporter.sendMail(mailOptions);
 
     res.json({ success: true, message: `Job assigned to ${driverEmail}` });
 
