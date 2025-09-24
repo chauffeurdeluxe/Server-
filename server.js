@@ -1,4 +1,6 @@
 require('dotenv').config();
+console.log("DEBUG: SUPABASE_URL =", `"${process.env.SUPABASE_URL}"`);
+console.log("DEBUG: SUPABASE_SERVICE_ROLE_KEY =", `"${process.env.SUPABASE_SERVICE_ROLE_KEY}"`);
 const express = require('express');
 const cors = require('cors');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
