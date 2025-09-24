@@ -98,8 +98,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 app.use(bodyParser.json());
 
 /* ------------------- NODEMAILER / SENDGRID ------------------- */
-const nodemailer = require('nodemailer');
-
 const transporter = nodemailer.createTransport({
   host: 'smtp.sendgrid.net',
   port: 587,
