@@ -253,8 +253,6 @@ async function sendEmail(booking) {
 
 
 /* ------------------- SEND PDF INVOICE ------------------- */
-const streamBuffers = require('stream-buffers');
-
 async function sendInvoicePDF(booking, sessionId) {
   return new Promise((resolve, reject) => {
     try {
