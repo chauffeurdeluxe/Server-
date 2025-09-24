@@ -253,7 +253,6 @@ async function sendEmail(booking) {
 
 
 /* ------------------- SEND PDF INVOICE ------------------- */
-const PDFDocument = require('pdfkit');
 const streamBuffers = require('stream-buffers');
 
 async function sendInvoicePDF(booking, sessionId) {
