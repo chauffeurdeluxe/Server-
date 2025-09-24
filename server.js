@@ -97,12 +97,15 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
 app.use(bodyParser.json());
 
-/* ------------------- NODEMAILER ------------------- */
+/* ------------------- NODEMAILER / SENDGRID ------------------- */
+const nodemailer = require('nodemailer');
+
 const transporter = nodemailer.createTransport({
   host: 'smtp.sendgrid.net',
   port: 587,
+  secure: false, // must be false for 587
   auth: {
-    user: 'apikey',
+    user: 'apikey', // literally 'apikey' for SendGrid
     pass: process.env.SENDGRID_API_KEY
   }
 });
@@ -222,11 +225,11 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-/* ------------------- EMAIL & PDF FUNCTIONS ------------------- */
+/* ------------------- SEND EMAIL (ADMIN NOTIFICATION) ------------------- */
 async function sendEmail(booking) {
   try {
     await transporter.sendMail({
-      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
+      from: `"Chauffeur de Luxe" <${process.env.EMAIL_USER}>`, // must be verified sender in SendGrid
       to: process.env.EMAIL_TO,
       subject: `New Booking from ${booking.name}`,
       html: `
@@ -244,65 +247,91 @@ async function sendEmail(booking) {
         <p><strong>Notes:</strong> ${booking.notes || 'None'}</p>
       `
     });
+    console.log('✅ Admin notification sent');
   } catch (err) {
-    console.error('Email error:', err);
+    console.error('❌ Admin email error:', err);
   }
 }
 
+
+/* ------------------- SEND PDF INVOICE ------------------- */
+const PDFDocument = require('pdfkit');
+const streamBuffers = require('stream-buffers');
+
 async function sendInvoicePDF(booking, sessionId) {
-  try {
-    const doc = new PDFDocument({ size: 'A4', margin: 50 });
-    const bufferStream = new streamBuffers.WritableStreamBuffer();
-    doc.pipe(bufferStream);
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ size: 'A4', margin: 50 });
+      const bufferStream = new streamBuffers.WritableStreamBuffer();
 
-    doc.fontSize(20).fillColor('#B9975B').text('CHAUFFEUR DE LUXE', { align: 'center' });
-    doc.fontSize(12).fillColor('black').text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(18).fillColor('black').text('Invoice', { align: 'center' });
-    doc.moveDown();
+      doc.pipe(bufferStream);
 
-    doc.fontSize(12)
-      .text('Business Name: Chauffeur de Luxe')
-      .text('ABN: ______________________ (to be filled)')
-      .moveDown();
+      // HEADER
+      doc.fontSize(20).fillColor('#B9975B').text('CHAUFFEUR DE LUXE', { align: 'center' });
+      doc.fontSize(12).fillColor('black').text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
+      doc.moveDown();
+      doc.fontSize(18).text('Invoice', { align: 'center' });
+      doc.moveDown();
 
-    doc.text(`Invoice Number: ${sessionId}`)
-      .text(`Date: ${new Date().toLocaleDateString()}`)
-      .moveDown();
+      doc.fontSize(12)
+        .text('Business Name: Chauffeur de Luxe')
+        .text('ABN: ______________________ (to be filled)')
+        .moveDown();
 
-    doc.text('Billed To:')
-      .text(`Name: ${booking.name}`)
-      .text(`Email: ${booking.email}`)
-      .text(`Phone: ${booking.phone}`)
-      .moveDown();
+      doc.text(`Invoice Number: ${sessionId}`)
+        .text(`Date: ${new Date().toLocaleDateString()}`)
+        .moveDown();
 
-    doc.text(`Pickup: ${booking.pickup}`)
-      .text(`Dropoff: ${booking.dropoff}`)
-      .text(`Pickup Time: ${booking.datetime}`)
-      .text(`Vehicle Type: ${booking.vehicleType}`)
-      .moveDown();
+      // CUSTOMER DETAILS
+      doc.text('Billed To:')
+        .text(`Name: ${booking.name}`)
+        .text(`Email: ${booking.email}`)
+        .text(`Phone: ${booking.phone}`)
+        .moveDown();
 
-    doc.text(`Distance: ${booking.distanceKm} km`)
-      .text(`Estimated Duration: ${booking.durationMin} min`)
-      .text(`Notes: ${booking.notes || 'None'}`)
-      .moveDown();
+      doc.text(`Pickup: ${booking.pickup}`)
+        .text(`Dropoff: ${booking.dropoff}`)
+        .text(`Pickup Time: ${booking.datetime}`)
+        .text(`Vehicle Type: ${booking.vehicleType}`)
+        .moveDown();
 
-    doc.fontSize(14).text(`Total Fare: $${booking.totalFare}`, { align: 'right' });
-    doc.end();
+      doc.text(`Distance: ${booking.distanceKm} km`)
+        .text(`Estimated Duration: ${booking.durationMin} min`)
+        .text(`Notes: ${booking.notes || 'None'}`)
+        .moveDown();
 
-    bufferStream.on('finish', async () => {
-      const pdfBuffer = bufferStream.getContents();
-      await transporter.sendMail({
-        from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-        to: booking.email,
-        subject: 'Your Chauffeur de Luxe Invoice',
-        text: 'Please find your invoice attached.',
-        attachments: [{ filename: 'invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
+      doc.fontSize(14).text(`Total Fare: $${booking.totalFare}`, { align: 'right' });
+
+      doc.end();
+
+      bufferStream.on('finish', async () => {
+        const pdfBuffer = bufferStream.getContents();
+
+        if (!pdfBuffer) {
+          console.error('❌ PDF buffer is empty');
+          return reject(new Error('PDF generation failed'));
+        }
+
+        try {
+          await transporter.sendMail({
+            from: `"Chauffeur de Luxe" <${process.env.EMAIL_USER}>`,
+            to: booking.email,
+            subject: 'Your Chauffeur de Luxe Invoice',
+            text: 'Please find your invoice attached.',
+            attachments: [{ filename: 'invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
+          });
+          console.log('✅ Invoice sent to customer');
+          resolve();
+        } catch (err) {
+          console.error('❌ Sending invoice email failed:', err);
+          reject(err);
+        }
       });
-    });
-  } catch (err) {
-    console.error('Invoice PDF error:', err);
-  }
+    } catch (err) {
+      console.error('❌ PDF creation error:', err);
+      reject(err);
+    }
+  });
 }
 
 /* ------------------- DRIVER SET PASSWORD ------------------- */
