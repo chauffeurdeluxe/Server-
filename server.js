@@ -585,7 +585,7 @@ app.post('/assign-job', async (req, res) => {
     }
 
  // 3. Send email to driver with driver pay only
-const transporter = nodemailer.createTransport({
+// use the global transporter
   service: 'gmail',
   auth: {
     user: process.env.EMAIL_USER,
