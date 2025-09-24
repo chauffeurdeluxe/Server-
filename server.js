@@ -98,8 +98,12 @@ app.use(bodyParser.json());
 
 /* ------------------- NODEMAILER ------------------- */
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+  host: 'smtp.sendgrid.net',
+  port: 587,
+  auth: {
+    user: 'apikey',
+    pass: process.env.SENDGRID_API_KEY
+  }
 });
 
 /* ------------------- MULTER SETUP ------------------- */
@@ -583,16 +587,6 @@ app.post('/assign-job', async (req, res) => {
       console.error('Error assigning booking:', updateError);
       return res.status(500).json({ error: 'Failed to assign job' });
     }
-
- // 3. Send email to driver with driver pay only
-// Global transporter at top
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
 
 const driverPay = calculateDriverPayout(booking.fare);
 
