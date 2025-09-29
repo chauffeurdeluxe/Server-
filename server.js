@@ -19,7 +19,12 @@ const supabase = createClient(
 );
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: [
+    'https://bookingform-pi.vercel.app',         // old domain
+    'https://bookings.chauffeurdeluxe.com.au'   // new domain
+  ]
+}));
 app.use(express.static('public'));
 
 /* ------------------- STRIPE WEBHOOK ------------------- */
