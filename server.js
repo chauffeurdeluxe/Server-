@@ -217,8 +217,8 @@ app.post('/create-checkout-session', async (req, res) => {
         distanceKm: distanceKm ? distanceKm.toString() : 'N/A',
         durationMin: durationMin ? durationMin.toString() : 'N/A'
       },
-      success_url: 'https://bookingform-pi.vercel.app/success.html',
-      cancel_url: 'https://bookingform-pi.vercel.app/cancel.html'
+      success_url: 'https://bookings.chauffeurdeluxe.com.au/success.html',
+      cancel_url: 'https://bookings.chauffeurdeluxe.com.au/cancel.html'
     });
 
     res.status(200).json({ id: session.id, url: session.url });
