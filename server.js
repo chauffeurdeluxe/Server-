@@ -298,7 +298,6 @@ async function sendInvoicePDF(booking, sessionId) {
       doc.moveDown();
 
       // Date in Australian format
-      const date = new Date(booking.datetime);
       const formattedDateTime = formatAustralianDateTime(date);
 
       // CLIENT DETAILS
