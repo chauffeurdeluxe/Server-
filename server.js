@@ -311,7 +311,7 @@ async function sendInvoicePDF(booking, sessionId) {
       // BOOKING DETAILS stacked
       doc.fontSize(12).text(`Pickup: ${booking.pickup}`);
       doc.text(`Dropoff: ${booking.dropoff}`);
-      doc.text(`Date/Time: ${formattedDate} ${formattedTime}`);
+      doc.text(`Date/Time: ${formattedDateTime}`); 
       doc.text(`Vehicle: ${booking.vehicleType}`);
       doc.text(`Distance: ${booking.distanceKm} km`);
       doc.text(`Fare: $${booking.totalFare}`);
