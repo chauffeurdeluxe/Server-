@@ -347,14 +347,6 @@ async function sendInvoicePDF(booking, sessionId) {
   });
 }
 
-
-    } catch (err) {
-      console.error('❌ PDF creation error:', err);
-      reject(err);
-    }
-  });
-}
-
 /* ------------------- DRIVER SET PASSWORD ------------------- */
 app.post('/driver-set-password', async (req, res) => {
   try {
