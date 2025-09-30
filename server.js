@@ -139,6 +139,7 @@ function calculateDriverPayout(clientFare) {
   return parseFloat(net.toFixed(2));
 }
 
+/* ------------------- PARTNER FORM ROUTE ------------------- */
 app.post('/partner-form', upload.fields([
   { name: 'insuranceFile', maxCount: 1 },
   { name: 'regoFile', maxCount: 1 },
@@ -148,13 +149,20 @@ app.post('/partner-form', upload.fields([
 ]), async (req, res) => {
   try {
     const data = req.body;
-    const files = req.files;
+    const files = req.files || {};
 
-    const attachments = Object.values(files).flat().map(f => ({
-      filename: f.originalname,
-      path: f.path
-    }));
+    // Convert all uploaded files to Base64 attachments
+    const attachments = Object.values(files).flat().map(f => {
+      const fileBuffer = fs.readFileSync(f.path);
+      return {
+        content: fileBuffer.toString('base64'),   // ✅ required by SendGrid
+        filename: f.originalname,
+        type: f.mimetype,
+        disposition: 'attachment'
+      };
+    });
 
+    // Send email to admin
     await sgMail.send({
       to: process.env.EMAIL_TO,
       from: process.env.EMAIL_USER,
@@ -172,10 +180,12 @@ app.post('/partner-form', upload.fields([
       attachments
     });
 
+    console.log(`✅ Partner form submitted: ${data.fullName}`);
     res.status(200).json({ message: 'Form submitted successfully' });
+
   } catch (err) {
-    console.error('Partner form error:', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error('❌ Partner form error:', err);
+    res.status(500).json({ error: 'Server error submitting partner form' });
   }
 });
 
