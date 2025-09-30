@@ -268,7 +268,7 @@ async function sendInvoicePDF(booking, sessionId) {
       // HEADER: Black background, logo, gold text
       doc.rect(0, 0, doc.page.width, 100).fill('#000000');
       // Logo
-      doc.image('https://yourdomain.com/logo.png', 50, 20, { width: 80 });
+      doc.image('./icon.png', 50, 20, { width: 80 });
       // Company name & tagline
       doc.fillColor('#B9975B').fontSize(24).text('CHAUFFEUR DE LUXE', 150, 25);
       doc.fontSize(12).text('Driven by Distinction. Defined by Elegance.', 150, 55);
