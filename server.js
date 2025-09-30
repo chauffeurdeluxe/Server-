@@ -299,8 +299,7 @@ async function sendInvoicePDF(booking, sessionId) {
 
       // Date in Australian format
       const date = new Date(booking.datetime);
-      const formattedDate = `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')}/${date.getFullYear()}`;
-      const formattedTime = `${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
+      const formattedDateTime = formatAustralianDateTime(date);
 
       // CLIENT DETAILS
       doc.fontSize(12).fillColor('black').text('Billed To:', { underline: true });
