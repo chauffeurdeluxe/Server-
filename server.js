@@ -12,6 +12,8 @@ const PDFDocument = require('pdfkit');
 const streamBuffers = require('stream-buffers');
 const { createClient } = require('@supabase/supabase-js');
 const bcrypt = require('bcryptjs');
+const sgMail = require('@sendgrid/mail');
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -102,14 +104,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
 app.use(bodyParser.json());
 
-/* ------------------- NODEMAILER / SENDGRID ------------------- */
-const transporter = nodemailer.createTransport({
-  service: 'SendGrid',
-  auth: {
-    user: 'apikey', // literally "apikey"
-    pass: process.env.SENDGRID_API_KEY
-  }
-});
 
 /* ------------------- MULTER SETUP ------------------- */
 const storage = multer.diskStorage({
@@ -145,22 +139,25 @@ app.post('/partner-form', upload.fields([
       attachments.push({ filename: files[field][0].originalname, path: files[field][0].path });
     }
 
-    await transporter.sendMail({
-      from: `Chauffeur de Luxe <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_TO,
-      subject: `New Driver Partner Submission - ${data.fullName}`,
-      html: `
-        <h2>Driver Partner Application</h2>
-        <p><strong>Company:</strong> ${data.companyName}</p>
-        <p><strong>Name:</strong> ${data.fullName}</p>
-        <p><strong>Email:</strong> ${data.email}</p>
-        <p><strong>Phone:</strong> ${data.phone}</p>
-        <p><strong>Car:</strong> ${data.carMake} ${data.carModel} (${data.carYear})</p>
-        <p><strong>Registration Expiry:</strong> ${data.regoExpiry}</p>
-        <p><strong>Insurance Expiry:</strong> ${data.insuranceExpiry}</p>
-      `,
-      attachments
-    });
+   await sgMail.send({
+  to: process.env.EMAIL_TO,
+  from: process.env.EMAIL_USER,
+  subject: `New Driver Partner Submission - ${data.fullName}`,
+  html: `
+    <h2>Driver Partner Application</h2>
+    <p><strong>Company:</strong> ${data.companyName}</p>
+    <p><strong>Name:</strong> ${data.fullName}</p>
+    <p><strong>Email:</strong> ${data.email}</p>
+    <p><strong>Phone:</strong> ${data.phone}</p>
+    <p><strong>Car:</strong> ${data.carMake} ${data.carModel} (${data.carYear})</p>
+    <p><strong>Registration Expiry:</strong> ${data.regoExpiry}</p>
+    <p><strong>Insurance Expiry:</strong> ${data.insuranceExpiry}</p>
+  `,
+  attachments: Object.values(req.files).flat().map(f => ({
+    filename: f.originalname,
+    path: f.path
+  }))
+});
 
     res.status(200).json({ message: 'Form submitted successfully' });
   } catch (err) {
@@ -228,29 +225,31 @@ app.post('/create-checkout-session', async (req, res) => {
 
 /* ------------------- SEND EMAIL (ADMIN NOTIFICATION) ------------------- */
 async function sendEmail(booking) {
+  const msg = {
+    to: process.env.EMAIL_TO,             // Admin email
+    from: process.env.EMAIL_USER,         // Verified SendGrid sender
+    subject: `New Booking from ${booking.name}`,
+    html: `
+      <h2>New Chauffeur Booking</h2>
+      <p><strong>Name:</strong> ${booking.name}</p>
+      <p><strong>Email:</strong> ${booking.email}</p>
+      <p><strong>Phone:</strong> ${booking.phone}</p>
+      <p><strong>Pickup:</strong> ${booking.pickup}</p>
+      <p><strong>Dropoff:</strong> ${booking.dropoff}</p>
+      <p><strong>Pickup Time:</strong> ${booking.datetime}</p>
+      <p><strong>Vehicle Type:</strong> ${booking.vehicleType}</p>
+      <p><strong>Total Fare:</strong> $${booking.totalFare}</p>
+      <p><strong>Distance:</strong> ${booking.distanceKm} km</p>
+      <p><strong>Estimated Time:</strong> ${booking.durationMin} min</p>
+      <p><strong>Notes:</strong> ${booking.notes || 'None'}</p>
+    `
+  };
+
   try {
-    await transporter.sendMail({
-      from: `"Chauffeur de Luxe" <${process.env.EMAIL_USER}>`, // must be verified sender in SendGrid
-      to: process.env.EMAIL_TO,
-      subject: `New Booking from ${booking.name}`,
-      html: `
-        <h2>New Chauffeur Booking</h2>
-        <p><strong>Name:</strong> ${booking.name}</p>
-        <p><strong>Email:</strong> ${booking.email}</p>
-        <p><strong>Phone:</strong> ${booking.phone}</p>
-        <p><strong>Pickup:</strong> ${booking.pickup}</p>
-        <p><strong>Dropoff:</strong> ${booking.dropoff}</p>
-        <p><strong>Pickup Time:</strong> ${booking.datetime}</p>
-        <p><strong>Vehicle Type:</strong> ${booking.vehicleType}</p>
-        <p><strong>Total Fare:</strong> $${booking.totalFare}</p>
-        <p><strong>Distance:</strong> ${booking.distanceKm} km</p>
-        <p><strong>Estimated Time:</strong> ${booking.durationMin} min</p>
-        <p><strong>Notes:</strong> ${booking.notes || 'None'}</p>
-      `
-    });
-    console.log('✅ Admin notification sent');
+    await sgMail.send(msg);
+    console.log('✅ Admin notification sent via SendGrid API');
   } catch (err) {
-    console.error('❌ Admin email error:', err);
+    console.error('❌ Admin email error (SendGrid API):', err);
   }
 }
 
@@ -261,7 +260,6 @@ async function sendInvoicePDF(booking, sessionId) {
     try {
       const doc = new PDFDocument({ size: 'A4', margin: 50 });
       const bufferStream = new streamBuffers.WritableStreamBuffer();
-
       doc.pipe(bufferStream);
 
       // HEADER
@@ -299,26 +297,28 @@ async function sendInvoicePDF(booking, sessionId) {
         .moveDown();
 
       doc.fontSize(14).text(`Total Fare: $${booking.totalFare}`, { align: 'right' });
-
       doc.end();
 
       bufferStream.on('finish', async () => {
         const pdfBuffer = bufferStream.getContents();
-
-        if (!pdfBuffer) {
-          console.error('❌ PDF buffer is empty');
-          return reject(new Error('PDF generation failed'));
-        }
+        if (!pdfBuffer) return reject(new Error('PDF generation failed'));
 
         try {
-          await transporter.sendMail({
-            from: `"Chauffeur de Luxe" <${process.env.EMAIL_USER}>`,
+          await sgMail.send({
             to: booking.email,
+            from: process.env.EMAIL_USER,
             subject: 'Your Chauffeur de Luxe Invoice',
             text: 'Please find your invoice attached.',
-            attachments: [{ filename: 'invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
+            attachments: [
+              {
+                content: pdfBuffer.toString('base64'),
+                filename: 'invoice.pdf',
+                type: 'application/pdf',
+                disposition: 'attachment'
+              }
+            ]
           });
-          console.log('✅ Invoice sent to customer');
+          console.log('✅ Invoice sent to customer via SendGrid API');
           resolve();
         } catch (err) {
           console.error('❌ Sending invoice email failed:', err);
