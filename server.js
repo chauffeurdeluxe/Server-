@@ -139,40 +139,38 @@ function calculateDriverPayout(clientFare) {
   return parseFloat(net.toFixed(2));
 }
 
-/* ------------------- PARTNER FORM ROUTE ------------------- */
 app.post('/partner-form', upload.fields([
   { name: 'insuranceFile', maxCount: 1 },
   { name: 'regoFile', maxCount: 1 },
-  { name: 'licenceFile', maxCount: 1 }
+  { name: 'licenceFile', maxCount: 1 },
+  { name: 'PoliceFile', maxCount: 1 },
+  { name: 'CompanyFile', maxCount: 1 }
 ]), async (req, res) => {
   try {
     const data = req.body;
     const files = req.files;
 
-    const attachments = [];
-    for (let field in files) {
-      attachments.push({ filename: files[field][0].originalname, path: files[field][0].path });
-    }
+    const attachments = Object.values(files).flat().map(f => ({
+      filename: f.originalname,
+      path: f.path
+    }));
 
-   await sgMail.send({
-  to: process.env.EMAIL_TO,
-  from: process.env.EMAIL_USER,
-  subject: `New Driver Partner Submission - ${data.fullName}`,
-  html: `
-    <h2>Driver Partner Application</h2>
-    <p><strong>Company:</strong> ${data.companyName}</p>
-    <p><strong>Name:</strong> ${data.fullName}</p>
-    <p><strong>Email:</strong> ${data.email}</p>
-    <p><strong>Phone:</strong> ${data.phone}</p>
-    <p><strong>Car:</strong> ${data.carMake} ${data.carModel} (${data.carYear})</p>
-    <p><strong>Registration Expiry:</strong> ${data.regoExpiry}</p>
-    <p><strong>Insurance Expiry:</strong> ${data.insuranceExpiry}</p>
-  `,
-  attachments: Object.values(req.files).flat().map(f => ({
-    filename: f.originalname,
-    path: f.path
-  }))
-});
+    await sgMail.send({
+      to: process.env.EMAIL_TO,
+      from: process.env.EMAIL_USER,
+      subject: `New Driver Partner Submission - ${data.fullName}`,
+      html: `
+        <h2>Driver Partner Application</h2>
+        <p><strong>Company:</strong> ${data.companyName}</p>
+        <p><strong>Name:</strong> ${data.fullName}</p>
+        <p><strong>Email:</strong> ${data.email}</p>
+        <p><strong>Phone:</strong> ${data.phone}</p>
+        <p><strong>Car:</strong> ${data.carMake} ${data.carModel} (${data.carYear})</p>
+        <p><strong>Registration Expiry:</strong> ${data.regoExpiry}</p>
+        <p><strong>Insurance Expiry:</strong> ${data.insuranceExpiry}</p>
+      `,
+      attachments
+    });
 
     res.status(200).json({ message: 'Form submitted successfully' });
   } catch (err) {
