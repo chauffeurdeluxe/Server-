@@ -258,49 +258,76 @@ async function sendEmail(booking) {
 }
 
 
-/* ------------------- SEND PDF INVOICE ------------------- */
-async function sendInvoicePDF(booking, sessionId) {
+async function sendStyledInvoicePDF(booking, sessionId) {
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({ size: 'A4', margin: 50 });
       const bufferStream = new streamBuffers.WritableStreamBuffer();
       doc.pipe(bufferStream);
 
-      // HEADER
-      doc.fontSize(20).fillColor('#B9975B').text('CHAUFFEUR DE LUXE', { align: 'center' });
-      doc.fontSize(12).fillColor('black').text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
-      doc.moveDown();
-      doc.fontSize(18).text('Invoice', { align: 'center' });
+      // HEADER: Black background, logo, gold text
+      doc.rect(0, 0, doc.page.width, 100).fill('#000000');
+      // Logo
+      doc.image('https://yourdomain.com/logo.png', 50, 20, { width: 80 });
+      // Company name & tagline
+      doc.fillColor('#B9975B').fontSize(24).text('CHAUFFEUR DE LUXE', 150, 25);
+      doc.fontSize(12).text('Driven by Distinction. Defined by Elegance.', 150, 55);
+
+      doc.moveDown(5);
+
+      // INVOICE TITLE
+      doc.fillColor('black').fontSize(20).text('Invoice', { align: 'center' });
       doc.moveDown();
 
+      // Invoice metadata
       doc.fontSize(12)
-        .text('Business Name: Chauffeur de Luxe')
-        .text('ABN: ______________________ (to be filled)')
-        .moveDown();
-
-      doc.text(`Invoice Number: ${sessionId}`)
-        .text(`Date: ${new Date().toLocaleDateString()}`)
-        .moveDown();
+         .text(`Invoice Number: ${sessionId}`, { continued: true })
+         .text(`   Date: ${new Date().toLocaleDateString()}`, { align: 'right' });
+      doc.moveDown();
 
       // CUSTOMER DETAILS
-      doc.text('Billed To:')
-        .text(`Name: ${booking.name}`)
-        .text(`Email: ${booking.email}`)
-        .text(`Phone: ${booking.phone}`)
-        .moveDown();
+      doc.fontSize(12).text('Billed To:', { underline: true });
+      doc.text(`Name: ${booking.name}`);
+      doc.text(`Email: ${booking.email}`);
+      doc.text(`Phone: ${booking.phone}`);
+      doc.moveDown();
 
-      doc.text(`Pickup: ${booking.pickup}`)
-        .text(`Dropoff: ${booking.dropoff}`)
-        .text(`Pickup Time: ${booking.datetime}`)
-        .text(`Vehicle Type: ${booking.vehicleType}`)
-        .moveDown();
+      // BOOKING DETAILS TABLE
+      const tableTop = doc.y;
+      const rowHeight = 25;
 
-      doc.text(`Distance: ${booking.distanceKm} km`)
-        .text(`Estimated Duration: ${booking.durationMin} min`)
-        .text(`Notes: ${booking.notes || 'None'}`)
-        .moveDown();
+      // Table headers with gold background
+      doc.rect(50, tableTop, 500, rowHeight).fill('#B9975B');
+      doc.fillColor('black').fontSize(12).text('Pickup', 55, tableTop + 7);
+      doc.text('Dropoff', 155, tableTop + 7);
+      doc.text('Date/Time', 305, tableTop + 7);
+      doc.text('Vehicle', 425, tableTop + 7);
+      doc.text('Distance', 505, tableTop + 7);
+      doc.text('Fare', 555, tableTop + 7);
 
-      doc.fontSize(14).text(`Total Fare: $${booking.totalFare}`, { align: 'right' });
+      // Table data row
+      const dataY = tableTop + rowHeight;
+      doc.rect(50, dataY, 500, rowHeight).stroke('#B9975B'); // gold border
+      doc.fillColor('black')
+         .text(booking.pickup, 55, dataY + 7)
+         .text(booking.dropoff, 155, dataY + 7)
+         .text(booking.datetime, 305, dataY + 7)
+         .text(booking.vehicleType, 425, dataY + 7)
+         .text(`${booking.distanceKm} km`, 505, dataY + 7)
+         .text(`$${booking.totalFare}`, 555, dataY + 7);
+
+      doc.moveDown(4);
+
+      // TOTAL FARE HIGHLIGHT
+      doc.rect(400, doc.y, 150, 30).fill('#B9975B');
+      doc.fillColor('#000000').fontSize(14).text(`Total: $${booking.totalFare}`, 410, doc.y + 7);
+
+      // FOOTER
+      doc.moveDown(4);
+      doc.fontSize(10).fillColor('gray')
+         .text('Chauffeur de Luxe – Premium Chauffeur Service', { align: 'center' })
+         .text('www.chauffeurdeluxe.com.au | info@chauffeurdeluxe.com.au | +61 402 256 915', { align: 'center' });
+
       doc.end();
 
       bufferStream.on('finish', async () => {
@@ -322,7 +349,7 @@ async function sendInvoicePDF(booking, sessionId) {
               }
             ]
           });
-          console.log('✅ Invoice sent to customer via SendGrid API');
+          console.log('✅ Styled invoice sent to customer via SendGrid API');
           resolve();
         } catch (err) {
           console.error('❌ Sending invoice email failed:', err);
