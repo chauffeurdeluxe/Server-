@@ -174,8 +174,8 @@ app.post('/partner-form', upload.fields([
         <p><strong>Email:</strong> ${data.email}</p>
         <p><strong>Phone:</strong> ${data.phone}</p>
         <p><strong>Car:</strong> ${data.carMake} ${data.carModel} (${data.carYear})</p>
-        <p><strong>Registration Expiry:</strong> ${data.regoExpiry}</p>
-        <p><strong>Insurance Expiry:</strong> ${data.insuranceExpiry}</p>
+        <p><strong>Registration Expiry:</strong> ${formatDateAU(data.regoExpiry)}</p>
+        <p><strong>Insurance Expiry:</strong> ${formatDateAU(data.insuranceExpiry)}</p>
       `,
       attachments
     });
