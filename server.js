@@ -221,12 +221,18 @@ app.post('/create-checkout-session', async (req, res) => {
         quantity: 1
       }],
       metadata: {
-        name, email, phone, pickup, dropoff, datetime,
-        vehicleType, totalFare: totalFare.toString(),
-        notes: finalNotes,
-        distanceKm: distanceKm ? distanceKm.toString() : 'N/A',
-        durationMin: durationMin ? durationMin.toString() : 'N/A'
-      },
+  name,
+  email,
+  phone,
+  pickup,
+  dropoff,
+  datetime: formatAustralianDateTime(datetime),  // <-- apply Australian format
+  vehicleType,
+  totalFare: totalFare.toString(),
+  notes: finalNotes,
+  distanceKm: distanceKm ? distanceKm.toString() : 'N/A',
+  durationMin: durationMin ? durationMin.toString() : 'N/A'
+},
       success_url: 'https://bookings.chauffeurdeluxe.com.au/success.html',
       cancel_url: 'https://bookings.chauffeurdeluxe.com.au/cancel.html'
     });
@@ -477,7 +483,7 @@ app.get('/driver-jobs', async (req, res) => {
       id: job.id,
       pickup: job.pickup,
       dropoff: job.dropoff,
-      pickuptime: job.pickuptime,
+      pickuptime: formatAustralianDateTime(job.pickuptime),
       vehicletype: job.vehicletype,
       driverPay: calculateDriverPayout(job.fare), // optional for assigned jobs
       notes: job.notes,
@@ -493,7 +499,7 @@ app.get('/driver-jobs', async (req, res) => {
       id: job.id,
       pickup: job.pickup,
       dropoff: job.dropoff,
-      pickuptime: job.pickuptime,
+      pickuptime: formatAustralianDateTime(job.pickuptime),
       vehicletype: job.vehicletype,
       driverPay: job.driverPay,  // use stored value
       notes: job.notes,
