@@ -103,15 +103,13 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 app.use(bodyParser.json());
 
 /* ------------------- NODEMAILER / SENDGRID ------------------- */
-const transporter = nodemailer.createTransport({
-  host: 'smtp.sendgrid.net',
-  port: 587,
-  secure: false, // must be false for 587
-  auth: {
-    user: 'apikey', // literally 'apikey' for SendGrid
-    pass: process.env.SENDGRID_API_KEY
-  }
-});
+const sgTransport = require('nodemailer-sendgrid');
+
+const transporter = nodemailer.createTransport(
+  sgTransport({
+    apiKey: process.env.SENDGRID_API_KEY
+  })
+);
 
 /* ------------------- MULTER SETUP ------------------- */
 const storage = multer.diskStorage({
