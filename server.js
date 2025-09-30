@@ -19,6 +19,18 @@ const bcrypt = require('bcryptjs');
 const sgMail = require('@sendgrid/mail');
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
+// Helper: format date in Australian format DD/MM/YYYY
+function formatDateAU(inputDate) {
+  if (!inputDate) return 'N/A';
+  const d = new Date(inputDate);
+  if (isNaN(d)) return inputDate; // fallback if invalid
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+
 // Helper: format date/time in Australian format DD/MM/YYYY HH:mm
 function formatAustralianDateTime(inputDate) {
   const d = new Date(inputDate);
