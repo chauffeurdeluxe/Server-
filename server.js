@@ -258,7 +258,7 @@ async function sendEmail(booking) {
 }
 
 
-async function sendStyledInvoicePDF(booking, sessionId) {
+async function sendInvoicePDF(booking, sessionId) {
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({ size: 'A4', margin: 50 });
