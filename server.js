@@ -265,13 +265,19 @@ async function sendInvoicePDF(booking, sessionId) {
       const bufferStream = new streamBuffers.WritableStreamBuffer();
       doc.pipe(bufferStream);
 
-      // HEADER: Black background, logo, gold text
-      doc.rect(0, 0, doc.page.width, 100).fill('#000000');
-      // Logo
-      doc.image('./assets/icon.png', 50, 20, { width: 80 });
-      // Company name & tagline
-      doc.fillColor('#B9975B').fontSize(24).text('CHAUFFEUR DE LUXE', 150, 25);
-      doc.fontSize(12).text('Driven by Distinction. Defined by Elegance.', 150, 55);
+      const pageWidth = doc.page.width;
+      const centerX = pageWidth / 2;
+
+      // HEADER: Black background
+      doc.rect(0, 0, pageWidth, 100).fill('#000000');
+
+      // Logo (centered)
+      const logoWidth = 80;
+      doc.image('./assets/icon.png', centerX - logoWidth / 2, 20, { width: logoWidth });
+
+      // Company name & tagline (centered)
+      doc.fillColor('#B9975B').fontSize(24).text('CHAUFFEUR DE LUXE', 0, 25, { align: 'center' });
+      doc.fontSize(12).text('Driven by Distinction. Defined by Elegance.', { align: 'center' });
 
       doc.moveDown(5);
 
@@ -279,7 +285,7 @@ async function sendInvoicePDF(booking, sessionId) {
       doc.fillColor('black').fontSize(20).text('Invoice', { align: 'center' });
       doc.moveDown();
 
-      // Invoice metadata
+      // Invoice metadata (right-aligned)
       doc.fontSize(12)
          .text(`Invoice Number: ${sessionId}`, { continued: true })
          .text(`   Date: ${new Date().toLocaleDateString()}`, { align: 'right' });
@@ -292,35 +298,39 @@ async function sendInvoicePDF(booking, sessionId) {
       doc.text(`Phone: ${booking.phone}`);
       doc.moveDown();
 
-      // BOOKING DETAILS TABLE
+      // BOOKING DETAILS TABLE (centered)
+      const tableWidth = 500;
+      const tableX = (pageWidth - tableWidth) / 2;
       const tableTop = doc.y;
       const rowHeight = 25;
 
-      // Table headers with gold background
-      doc.rect(50, tableTop, 500, rowHeight).fill('#B9975B');
-      doc.fillColor('black').fontSize(12).text('Pickup', 55, tableTop + 7);
-      doc.text('Dropoff', 155, tableTop + 7);
-      doc.text('Date/Time', 305, tableTop + 7);
-      doc.text('Vehicle', 425, tableTop + 7);
-      doc.text('Distance', 505, tableTop + 7);
-      doc.text('Fare', 555, tableTop + 7);
+      // Table headers
+      doc.rect(tableX, tableTop, tableWidth, rowHeight).fill('#B9975B');
+      doc.fillColor('black').fontSize(12)
+         .text('Pickup', tableX + 5, tableTop + 7)
+         .text('Dropoff', tableX + 105, tableTop + 7)
+         .text('Date/Time', tableX + 255, tableTop + 7)
+         .text('Vehicle', tableX + 375, tableTop + 7)
+         .text('Distance', tableX + 455, tableTop + 7)
+         .text('Fare', tableX + 515, tableTop + 7);
 
       // Table data row
       const dataY = tableTop + rowHeight;
-      doc.rect(50, dataY, 500, rowHeight).stroke('#B9975B'); // gold border
+      doc.rect(tableX, dataY, tableWidth, rowHeight).stroke('#B9975B'); // gold border
       doc.fillColor('black')
-         .text(booking.pickup, 55, dataY + 7)
-         .text(booking.dropoff, 155, dataY + 7)
-         .text(booking.datetime, 305, dataY + 7)
-         .text(booking.vehicleType, 425, dataY + 7)
-         .text(`${booking.distanceKm} km`, 505, dataY + 7)
-         .text(`$${booking.totalFare}`, 555, dataY + 7);
+         .text(booking.pickup, tableX + 5, dataY + 7)
+         .text(booking.dropoff, tableX + 105, dataY + 7)
+         .text(booking.datetime, tableX + 255, dataY + 7)
+         .text(booking.vehicleType, tableX + 375, dataY + 7)
+         .text(`${booking.distanceKm} km`, tableX + 455, dataY + 7)
+         .text(`$${booking.totalFare}`, tableX + 515, dataY + 7);
 
       doc.moveDown(4);
 
-      // TOTAL FARE HIGHLIGHT
-      doc.rect(400, doc.y, 150, 30).fill('#B9975B');
-      doc.fillColor('#000000').fontSize(14).text(`Total: $${booking.totalFare}`, 410, doc.y + 7);
+      // TOTAL FARE HIGHLIGHT (centered)
+      const totalBoxWidth = 150;
+      doc.rect(centerX - totalBoxWidth / 2, doc.y, totalBoxWidth, 30).fill('#B9975B');
+      doc.fillColor('#000000').fontSize(14).text(`Total: $${booking.totalFare}`, centerX, doc.y + 7, { align: 'center' });
 
       // FOOTER
       doc.moveDown(4);
@@ -356,6 +366,7 @@ async function sendInvoicePDF(booking, sessionId) {
           reject(err);
         }
       });
+
     } catch (err) {
       console.error('❌ PDF creation error:', err);
       reject(err);
