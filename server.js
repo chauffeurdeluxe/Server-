@@ -298,7 +298,7 @@ async function sendInvoicePDF(booking, sessionId) {
       doc.moveDown();
 
       // Date in Australian format
-      const formattedDateTime = formatAustralianDateTime(date);
+      const formattedDateTime = formatAustralianDateTime(booking.datetime);
 
       // CLIENT DETAILS
       doc.fontSize(12).fillColor('black').text('Billed To:', { underline: true });
