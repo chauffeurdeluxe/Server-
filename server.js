@@ -71,60 +71,59 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
   console.log("✅ Webhook received:", event.type);
 
   if (event.type === 'checkout.session.completed') {
-    const s = event.data.object;
-    console.log("🔔 Checkout session:", s);
+  const s = event.data.object;
 
-    const bookingId = Date.now().toString();
-    const booking = {
-      id: bookingId,
-      name: s.metadata.name,
-      email: s.metadata.email,
-      phone: s.metadata.phone,
-      pickup: s.metadata.pickup,
-      dropoff: s.metadata.dropoff,
-      datetime: s.metadata.datetime,
-      vehicleType: s.metadata.vehicleType,
-      totalFare: parseFloat(s.metadata.totalFare),
-      distanceKm: parseFloat(s.metadata.distanceKm) || 0,
-      durationMin: parseFloat(s.metadata.durationMin) || 0,
-      notes: s.metadata.notes || ''
-    };
+  const bookingId = Date.now().toString();
+  const booking = {
+    id: bookingId,
+    name: s.metadata.name,
+    email: s.metadata.email,
+    phone: s.metadata.phone,
+    pickup: s.metadata.pickup,
+    dropoff: s.metadata.dropoff,
+    datetime: new Date(s.metadata.datetime),  // <-- convert back to JS Date
+    vehicleType: s.metadata.vehicleType,
+    totalFare: parseFloat(s.metadata.totalFare),
+    distanceKm: parseFloat(s.metadata.distanceKm) || 0,
+    durationMin: parseFloat(s.metadata.durationMin) || 0,
+    notes: s.metadata.notes || ''
+  };
 
-    try {
-      const { error } = await supabase.from('pending_jobs').insert([{
-        id: booking.id,
-        customername: booking.name,
-        customeremail: booking.email,
-        customerphone: booking.phone,
-        pickup: booking.pickup,
-        dropoff: booking.dropoff,
-        pickuptime: booking.datetime,
-        vehicletype: booking.vehicleType,
-        fare: booking.totalFare,
-        status: 'pending',
-        createdat: new Date(),
-        distance_km: booking.distanceKm,
-        duration_min: booking.durationMin,
-        notes: booking.notes,
-        assignedto: null
-      }]);
+  try {
+    const { error } = await supabase.from('pending_jobs').insert([{
+      id: booking.id,
+      customername: booking.name,
+      customeremail: booking.email,
+      customerphone: booking.phone,
+      pickup: booking.pickup,
+      dropoff: booking.dropoff,
+      pickuptime: booking.datetime,   // valid Date → no more out-of-range error
+      vehicletype: booking.vehicleType,
+      fare: booking.totalFare,
+      status: 'pending',
+      createdat: new Date(),
+      distance_km: booking.distanceKm,
+      duration_min: booking.durationMin,
+      notes: booking.notes,
+      assignedto: null
+    }]);
 
-      if (error) {
-        console.error("❌ Supabase insert error:", error.message);
-      } else {
-        console.log("✅ Booking inserted into Supabase:", booking.id);
-      }
-    } catch (err) {
-      console.error("❌ Exception inserting booking:", err);
+    if (error) {
+      console.error("❌ Supabase insert error:", error.message);
+    } else {
+      console.log("✅ Booking inserted into Supabase:", booking.id);
     }
-
-    // Send email + invoice as before
-    try { await sendEmail(booking); console.log("✅ Notification email sent"); } 
-    catch (err) { console.error("❌ Email error:", err); }
-
-    try { await sendInvoicePDF(booking, s.id); console.log("✅ Invoice sent"); } 
-    catch (err) { console.error("❌ Invoice error:", err); }
+  } catch (err) {
+    console.error("❌ Exception inserting booking:", err);
   }
+
+  // send email/invoice using formatted Australian datetime
+  try { await sendEmail(booking); console.log("✅ Notification email sent"); } 
+  catch (err) { console.error("❌ Email error:", err); }
+
+  try { await sendInvoicePDF(booking, s.id); console.log("✅ Invoice sent"); } 
+  catch (err) { console.error("❌ Invoice error:", err); }
+}
 
   res.json({ received: true });
 });
@@ -225,6 +224,9 @@ app.post('/create-checkout-session', async (req, res) => {
   try {
     const finalNotes = hourlyNotes || notes || '';
 
+    // Convert pickup datetime to ISO for storage
+    const datetimeISO = new Date(datetime).toISOString();
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'payment',
@@ -241,18 +243,18 @@ app.post('/create-checkout-session', async (req, res) => {
         quantity: 1
       }],
       metadata: {
-  name,
-  email,
-  phone,
-  pickup,
-  dropoff,
-  datetime: formatAustralianDateTime(datetime),  // <-- apply Australian format
-  vehicleType,
-  totalFare: totalFare.toString(),
-  notes: finalNotes,
-  distanceKm: distanceKm ? distanceKm.toString() : 'N/A',
-  durationMin: durationMin ? durationMin.toString() : 'N/A'
-},
+        name,
+        email,
+        phone,
+        pickup,
+        dropoff,
+        datetime: datetimeISO,        // store ISO string, not formatted
+        vehicleType,
+        totalFare: totalFare.toString(),
+        notes: finalNotes,
+        distanceKm: distanceKm ? distanceKm.toString() : 'N/A',
+        durationMin: durationMin ? durationMin.toString() : 'N/A'
+      },
       success_url: 'https://bookings.chauffeurdeluxe.com.au/success.html',
       cancel_url: 'https://bookings.chauffeurdeluxe.com.au/cancel.html'
     });
