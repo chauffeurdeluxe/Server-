@@ -1,5 +1,9 @@
 console.log("DEBUG: SUPABASE_URL =", `"${process.env.SUPABASE_URL}"`);
 console.log("DEBUG: SUPABASE_SERVICE_ROLE_KEY =", `"${process.env.SUPABASE_SERVICE_ROLE_KEY}"`);
+console.log("DEBUG: STRIPE_SECRET_KEY =", `"${process.env.STRIPE_SECRET_KEY ? '[FOUND]' : '[NOT FOUND]'}"`);
+console.log("DEBUG: SENDGRID_API_KEY =", `"${process.env.SENDGRID_API_KEY ? '[FOUND]' : '[NOT FOUND]'}"`);
+console.log("DEBUG: EMAIL_USER =", `"${process.env.EMAIL_USER}"`);
+console.log("DEBUG: EMAIL_TO =", `"${process.env.EMAIL_TO}"`);
 const express = require('express');
 const cors = require('cors');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
