@@ -581,7 +581,7 @@ app.get('/pending-bookings', async (req, res) => {
   }
 });
 
-// ------------------- ASSIGN JOB -------------------
+/* ------------------- ASSIGN JOB ------------------- */
 app.post('/assign-job', async (req, res) => {
   try {
     const { driverEmail, bookingId } = req.body;
@@ -616,13 +616,15 @@ app.post('/assign-job', async (req, res) => {
       return res.status(500).json({ error: 'Failed to assign job' });
     }
 
-const driverPay = calculateDriverPayout(booking.fare);
+    // 3. Calculate driver pay
+    const driverPay = calculateDriverPayout(booking.fare);
 
-const mailOptions = {
-  from: `"Chauffeur de Luxe" <${process.env.EMAIL_USER}>`,
-  to: driverEmail,
-  subject: '🚘 New Job Assigned',
-  text: `
+    // 4. Send email to driver using SendGrid
+    const msg = {
+      to: driverEmail.trim().toLowerCase(),
+      from: process.env.EMAIL_USER,  // must be verified in SendGrid
+      subject: '🚘 New Job Assigned',
+      text: `
 Hello,
 
 You have been assigned a new job:
@@ -635,10 +637,15 @@ Customer Phone: ${booking.customerphone}
 Your Pay: $${driverPay}
 
 Please log in to your driver portal to confirm.
-  `
-};
+      `
+    };
 
-await transporter.sendMail(mailOptions);
+    try {
+      await sgMail.send(msg);
+      console.log(`✅ Job assignment email sent to ${driverEmail}`);
+    } catch (err) {
+      console.error('❌ Assign job email error:', err);
+    }
 
     res.json({ success: true, message: `Job assigned to ${driverEmail}` });
 
