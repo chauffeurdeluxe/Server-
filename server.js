@@ -19,6 +19,17 @@ const bcrypt = require('bcryptjs');
 const sgMail = require('@sendgrid/mail');
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
+// Helper: format date/time in Australian format DD/MM/YYYY HH:mm
+function formatAustralianDateTime(inputDate) {
+  const d = new Date(inputDate);
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  const year = d.getFullYear();
+  const hours = d.getHours().toString().padStart(2, '0');
+  const minutes = d.getMinutes().toString().padStart(2, '0');
+  return `${day}/${month}/${year} ${hours}:${minutes}`;
+}
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -240,7 +251,7 @@ async function sendEmail(booking) {
       <p><strong>Phone:</strong> ${booking.phone}</p>
       <p><strong>Pickup:</strong> ${booking.pickup}</p>
       <p><strong>Dropoff:</strong> ${booking.dropoff}</p>
-      <p><strong>Pickup Time:</strong> ${booking.datetime}</p>
+      <p><strong>Pickup Time:</strong> ${formatAustralianDateTime(booking.datetime)}</p>
       <p><strong>Vehicle Type:</strong> ${booking.vehicleType}</p>
       <p><strong>Total Fare:</strong> $${booking.totalFare}</p>
       <p><strong>Distance:</strong> ${booking.distanceKm} km</p>
@@ -646,7 +657,7 @@ You have been assigned a new job:
 
 Pickup: ${booking.pickup}
 Dropoff: ${booking.dropoff}
-Date & Time: ${new Date(booking.pickuptime).toLocaleString()}
+Date & Time: ${formatAustralianDateTime(booking.pickuptime)}
 Customer: ${booking.customername}
 Customer Phone: ${booking.customerphone}
 Your Pay: $${driverPay}
