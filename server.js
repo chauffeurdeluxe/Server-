@@ -19,6 +19,41 @@ const bcrypt = require('bcryptjs');
 const sgMail = require('@sendgrid/mail');
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
+// ------------------- DRIVER ACTION NOTIFICATION -------------------
+async function notifyAdminDriverAction(job, driverEmail, action) {
+  const actionText = {
+    confirmed: 'confirmed',
+    completed: 'completed',
+    refused: 'refused'
+  }[action] || action;
+
+  const msg = {
+    to: process.env.EMAIL_TO,
+    from: process.env.EMAIL_USER,
+    subject: `Driver ${actionText} a job: ${job.customername}`,
+    html: `
+      <h2>Driver Action Notification</h2>
+      <p><strong>Driver:</strong> ${driverEmail}</p>
+      <p><strong>Action:</strong> ${actionText}</p>
+      <p><strong>Customer:</strong> ${job.customername}</p>
+      <p><strong>Phone:</strong> ${job.customerphone}</p>
+      <p><strong>Pickup:</strong> ${job.pickup}</p>
+      <p><strong>Dropoff:</strong> ${job.dropoff}</p>
+      <p><strong>Pickup Time:</strong> ${formatAustralianDateTime(job.pickuptime)}</p>
+      <p><strong>Vehicle Type:</strong> ${job.vehicletype}</p>
+      <p><strong>Notes:</strong> ${job.notes || 'None'}</p>
+    `
+  };
+
+  try {
+    await sgMail.send(msg);
+    console.log(`✅ Admin notified: Driver ${actionText} job ${job.id}`);
+  } catch (err) {
+    console.error('❌ Admin notification error:', err);
+  }
+}
+
+
 // Helper: format date in Australian format DD/MM/YYYY
 function formatDateAU(inputDate) {
   if (!inputDate) return 'N/A';
@@ -557,55 +592,50 @@ app.post('/update-job', async (req, res) => {
 
     if (fetchError || !jobData) return res.status(404).json({ error: 'Job not found' });
 
-    if (status === 'confirmed') {
-      // Confirm job without changing assignment
-      const { error: confirmError } = await supabase
-        .from('pending_jobs')
-        .update({ status: 'confirmed', assignedto: email })
-        .eq('id', jobId);
-      if (confirmError) throw confirmError;
+  if (status === 'confirmed') {
+  const { error: confirmError } = await supabase
+    .from('pending_jobs')
+    .update({ status: 'confirmed', assignedto: email })
+    .eq('id', jobId);
+  if (confirmError) throw confirmError;
 
-      return res.json({ success: true });
-    }
+  await notifyAdminDriverAction(jobData, email, 'confirmed');
+  return res.json({ success: true });
+}
 
-    if (status === 'completed') {
-      // Move job to completed_jobs with driverPay
-      const driverPay = calculateDriverPayout(jobData.fare);
+if (status === 'completed') {
+  const driverPay = calculateDriverPayout(jobData.fare);
 
-      const { data: insertedJob, error: insertError } = await supabase
-        .from('completed_jobs')
-        .insert([{
-          ...jobData,
-          driverEmail: email,
-          driverPay,
-          completedAt: new Date().toISOString(),
-          status: 'completed'
-        }])
-        .select()
-        .single();
+  const { data: insertedJob, error: insertError } = await supabase
+    .from('completed_jobs')
+    .insert([{
+      ...jobData,
+      driverEmail: email,
+      driverPay,
+      completedAt: new Date().toISOString(),
+      status: 'completed'
+    }])
+    .select()
+    .single();
 
-      if (insertError) throw insertError;
+  if (insertError) throw insertError;
 
-      // Delete from pending_jobs after successful insert
-      const { error: deleteError } = await supabase
-        .from('pending_jobs')
-        .delete()
-        .eq('id', jobId);
-      if (deleteError) throw deleteError;
+  await supabase.from('pending_jobs').delete().eq('id', jobId);
 
-      return res.json({ success: true, completedJobId: insertedJob.id });
-    }
+  await notifyAdminDriverAction(jobData, email, 'completed');
+  return res.json({ success: true, completedJobId: insertedJob.id });
+}
 
-    if (status === 'refused') {
-      // Reset job to pending if refused
-      const { error: refuseError } = await supabase
-        .from('pending_jobs')
-        .update({ status: 'pending', assignedto: null })
-        .eq('id', jobId);
-      if (refuseError) throw refuseError;
+if (status === 'refused') {
+  const { error: refuseError } = await supabase
+    .from('pending_jobs')
+    .update({ status: 'pending', assignedto: null })
+    .eq('id', jobId);
+  if (refuseError) throw refuseError;
 
-      return res.json({ success: true });
-    }
+  await notifyAdminDriverAction(jobData, email, 'refused');
+  return res.json({ success: true });
+}
 
     res.status(400).json({ error: 'Invalid status' });
 
