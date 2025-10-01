@@ -513,7 +513,7 @@ app.get('/driver-jobs', async (req, res) => {
       .from('pending_jobs')
       .select('*')
       .eq('assignedto', email)
-      .eq('status', 'assigned')
+      .in('status', ['assigned', 'confirmed'])
       .order('pickuptime', { ascending: true });
 
     if (assignedError) {
