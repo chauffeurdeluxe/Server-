@@ -361,6 +361,8 @@ doc.text(`Phone: ${booking.phone}`);
 doc.moveDown(1);
 
 // BOOKING DETAILS
+const formattedDateTime = formatAustralianDateTime(booking.datetime);
+      
 doc.fontSize(12).text('Booking Details:', { underline: true });
 doc.text(`Pickup: ${booking.pickup}`);
 doc.text(`Dropoff: ${booking.dropoff}`);
