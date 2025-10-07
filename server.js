@@ -338,50 +338,51 @@ async function sendInvoicePDF(booking, sessionId) {
       const bufferStream = new streamBuffers.WritableStreamBuffer();
       doc.pipe(bufferStream);
 
-      // HEADER: Black background
-      doc.rect(0, 0, doc.page.width, 100).fill('#000000');
+      // HEADER (Gold on Black)
+doc.rect(0, 0, doc.page.width, 100).fill('#000');
+doc.image('./assets/icon.png', 50, 25, { width: 70 });
+doc.fillColor('#B9975B').fontSize(26).text('CHAUFFEUR DE LUXE', 140, 30);
+doc.fontSize(12).text('Driven by Distinction. Defined by Elegance.', 140, 58);
+doc.moveDown(3);
 
-      // Logo left
-      doc.image('./assets/icon.png', 50, 20, { width: 80 });
+// INVOICE TITLE
+doc.fillColor('#B9975B').fontSize(20).text('INVOICE', { align: 'center' });
+doc.moveDown(1);
 
-      // Company name and tagline next to logo
-      doc.fillColor('#B9975B').fontSize(24).text('CHAUFFEUR DE LUXE', 150, 25);
-      doc.fontSize(12).text('Driven by Distinction. Defined by Elegance.', 150, 55);
+// SEPARATOR LINE
+doc.moveTo(50, doc.y).lineTo(550, doc.y).strokeColor('#B9975B').stroke();
+doc.moveDown(1.5);
 
-      doc.moveDown(5);
+// CLIENT DETAILS
+doc.fillColor('black').fontSize(12).text('Billed To:', { underline: true });
+doc.text(`Name: ${booking.name}`);
+doc.text(`Email: ${booking.email}`);
+doc.text(`Phone: ${booking.phone}`);
+doc.moveDown(1);
 
-      // INVOICE TITLE centered
-      doc.fillColor('black').fontSize(20).text('Invoice', { align: 'center' });
-      doc.moveDown();
+// BOOKING DETAILS
+doc.fontSize(12).text('Booking Details:', { underline: true });
+doc.text(`Pickup: ${booking.pickup}`);
+doc.text(`Dropoff: ${booking.dropoff}`);
+doc.text(`Date/Time: ${formattedDateTime}`);
+doc.text(`Vehicle: ${booking.vehicleType}`);
+doc.text(`Distance: ${booking.distanceKm} km`);
+doc.moveDown(1);
 
-      // Date in Australian format
-      const formattedDateTime = formatAustralianDateTime(booking.datetime);
+// GOLD TOTAL BOX
+const totalY = doc.y + 10;
+doc.rect(50, totalY, 500, 40).fill('#B9975B');
+doc.fillColor('#000').fontSize(16)
+   .text(`TOTAL: $${booking.totalFare}`, 0, totalY + 12, { align: 'center' });
+doc.fillColor('#000').fontSize(10)
+   .text('(GST inclusive)', 0, totalY + 28, { align: 'center' });
 
-      // CLIENT DETAILS
-      doc.fontSize(12).fillColor('black').text('Billed To:', { underline: true });
-      doc.text(`Name: ${booking.name}`);
-      doc.text(`Email: ${booking.email}`);
-      doc.text(`Phone: ${booking.phone}`);
-      doc.moveDown();
+doc.moveDown(5);
 
-      // BOOKING DETAILS stacked
-      doc.fontSize(12).text(`Pickup: ${booking.pickup}`);
-      doc.text(`Dropoff: ${booking.dropoff}`);
-      doc.text(`Date/Time: ${formattedDateTime}`); 
-      doc.text(`Vehicle: ${booking.vehicleType}`);
-      doc.text(`Distance: ${booking.distanceKm} km`);
-      doc.text(`Fare: $${booking.totalFare}`);
-      doc.moveDown(2);
-
-      // TOTAL FARE
-      doc.rect(50, doc.y, 500, 30).fill('#B9975B');
-      doc.fillColor('#000000').fontSize(14).text(`Total: $${booking.totalFare} (GST inclusive)`, 55, doc.y + 7);
-
-      // FOOTER
-      doc.moveDown(5);
-      doc.fontSize(10).fillColor('gray')
-         .text('Chauffeur de Luxe – Premium Chauffeur Service', { align: 'center' })
-         .text('www.chauffeurdeluxe.com.au | info@chauffeurdeluxe.com.au | +61 402 256 915', { align: 'center' });
+// FOOTER (smaller gray text)
+doc.fontSize(10).fillColor('gray')
+   .text('Chauffeur de Luxe – Premium Chauffeur Service', { align: 'center' })
+   .text('www.chauffeurdeluxe.com.au |bookings@chauffeurdeluxe.com.au | +61 402 256 915', { align: 'center' });
 
       doc.end();
 
