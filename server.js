@@ -337,18 +337,26 @@ async function sendInvoicePDF(booking, sessionId) {
       const doc = new PDFDocument({ size: 'A4', margin: 50 });
       const bufferStream = new streamBuffers.WritableStreamBuffer();
       doc.pipe(bufferStream);
+      
+      /* ---------- HEADER (Black background, gold text, centered layout) ---------- */
+doc.rect(0, 0, doc.page.width, 90).fill('#000000');
 
-    /* ---------- HEADER (Black background, gold text) ---------- */
-      doc.rect(0, 0, doc.page.width, 90).fill('#000000');
+const pageWidth = doc.page.width;
+const logoWidth = 60;
+const logoY = 20;
+const logoX = (pageWidth - logoWidth) / 2;
 
-      // Logo + Company name inline
-      const logoY = 25;
-      doc.image('./assets/icon.png', 50, logoY, { width: 60 });
-      doc.fillColor('#B9975B')
-        .fontSize(22)
-        .text('CHAUFFEUR DE LUXE', 120, 30);
-      doc.fontSize(10)
-        .text('Driven by Distinction. Defined by Elegance.', 120, 55);
+// Centered logo
+doc.image('./assets/icon.png', logoX, logoY, { width: logoWidth });
+
+// Centered text below logo
+doc.fillColor('#B9975B')
+  .font('Helvetica-Bold')
+  .fontSize(20)
+  .text('CHAUFFEUR DE LUXE', 0, 60, { align: 'center' })
+  .font('Helvetica-Oblique')
+  .fontSize(10)
+  .text('Driven by Distinction. Defined by Elegance.', 0, 78, { align: 'center' });
 
       /* ---------- INVOICE TITLE ---------- */
       doc.moveDown(3);
