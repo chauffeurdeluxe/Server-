@@ -378,13 +378,13 @@ doc.fillColor('#B9975B');
 doc.font('Helvetica-Bold').fontSize(22).text(companyName, textX, textY);
 doc.font('Helvetica').fontSize(10).text(tagline, textX, textY + 25);
 
-/* ---------- INVOICE TITLE ---------- */
+/* ---------- INVOICE TITLE (centered but nudged right and larger) ---------- */
 doc.moveDown(3);
 doc.fillColor('#000000')
   .font('Helvetica-Bold')
-  .fontSize(24)
-  .text('INVOICE', 0, 150, { align: 'center' });
-doc.moveDown(1.5);
+  .fontSize(28)
+  .text('INVOICE', 40, 150, { align: 'center' }); // shifted 40px right
+doc.moveDown(1.2);
 
 /* ---------- BUSINESS INFO (Top Left Corner) ---------- */
 doc.fontSize(11)
