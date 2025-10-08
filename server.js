@@ -338,79 +338,87 @@ async function sendInvoicePDF(booking, sessionId) {
       const bufferStream = new streamBuffers.WritableStreamBuffer();
       doc.pipe(bufferStream);
       
-      /* ---------- HEADER (Black background, gold text) ---------- */
-      doc.rect(0, 0, doc.page.width, 90).fill('#000000');
+      /* ---------- HEADER (Centered, black background, gold text) ---------- */
+doc.rect(0, 0, doc.page.width, 110).fill('#000000');
 
-      // Logo + Company name inline
-      const logoY = 25;
-      doc.image('./assets/icon.png', 50, logoY, { width: 60 });
-      doc.fillColor('#B9975B')
-        .fontSize(22)
-        .text('CHAUFFEUR DE LUXE', 120, 30);
-      doc.fontSize(10)
-        .text('Driven by Distinction. Defined by Elegance.', 120, 55);
+const pageWidth = doc.page.width;
+const logoWidth = 70;
+const logoX = (pageWidth - logoWidth) / 2; // center horizontally
 
-      /* ---------- INVOICE TITLE ---------- */
-      doc.moveDown(3);
-      doc.fillColor('#000000')
-        .fontSize(22)
-        .text('INVOICE', { align: 'center' });
-      doc.moveDown(0.5);
+// Centered logo
+doc.image('./assets/icon.png', logoX, 20, { width: logoWidth });
 
-      /* ---------- BUSINESS INFO (Top Left Corner) ---------- */
-      doc.fontSize(11)
-        .fillColor('#000000')
-        .text('Chauffeur de Luxe', 50, 140)
-        .text('ABN: 12 345 678 910')
-        .text('info@chauffeurdeluxe.com.au')
-        .text('+61 402 256 915')
-        .moveDown(1.5);
+// Centered company name + tagline under logo
+doc.fillColor('#B9975B')
+  .font('Helvetica-Bold')
+  .fontSize(22)
+  .text('CHAUFFEUR DE LUXE', 0, 95, { align: 'center' })
+  .font('Helvetica-Oblique')
+  .fontSize(11)
+  .text('Driven by Distinction. Defined by Elegance.', 0, 115, { align: 'center' });
 
-      /* ---------- CLIENT DETAILS ---------- */
-      doc.fontSize(12).fillColor('#000000')
-        .text('Client Details', 50)
-        .moveTo(50, doc.y + 2).lineTo(150, doc.y + 2).stroke('#B9975B')
-        .moveDown(0.6);
+/* ---------- INVOICE TITLE ---------- */
+doc.moveDown(3);
+doc.fillColor('#000000')
+  .font('Helvetica-Bold')
+  .fontSize(24)
+  .text('INVOICE', 0, 150, { align: 'center' });
+doc.moveDown(1.5);
 
-      doc.fontSize(11)
-        .text(`Name: ${booking.name}`)
-        .text(`Email: ${booking.email}`)
-        .text(`Phone: ${booking.phone}`)
-        .moveDown(1.2);
+/* ---------- BUSINESS INFO (Top Left Corner) ---------- */
+doc.fontSize(11)
+  .fillColor('#000000')
+  .text('Chauffeur de Luxe', 60, 200)
+  .text('ABN: 12 345 678 910')
+  .text('bookings@chauffeurdeluxe.com.au')
+  .text('+61 402 256 915')
+  .moveDown(1.5);
 
-      /* ---------- BOOKING DETAILS ---------- */
-      doc.fontSize(12).fillColor('#000000')
-        .text('Booking Details', 50)
-        .moveTo(50, doc.y + 2).lineTo(165, doc.y + 2).stroke('#B9975B')
-        .moveDown(0.6);
+/* ---------- CLIENT DETAILS ---------- */
+doc.fontSize(12).fillColor('#000000')
+  .text('Client Details', 60)
+  .moveTo(60, doc.y + 2).lineTo(160, doc.y + 2).stroke('#B9975B')
+  .moveDown(0.6);
 
-      const formattedDateTime = formatAustralianDateTime(booking.datetime);
-      doc.fontSize(11)
-        .text(`Pickup: ${booking.pickup}`)
-        .text(`Dropoff: ${booking.dropoff}`)
-        .text(`Date/Time: ${formattedDateTime}`)
-        .text(`Vehicle: ${booking.vehicleType}`)
-        .text(`Distance: ${booking.distanceKm} km`)
-        .moveDown(2);
+doc.fontSize(11)
+  .text(`Name: ${booking.name}`)
+  .text(`Email: ${booking.email}`)
+  .text(`Phone: ${booking.phone}`)
+  .moveDown(1.2);
 
-      /* ---------- TOTAL FARE (Gold highlight bar) ---------- */
-      const totalY = doc.y;
-      doc.rect(50, totalY, 500, 35).fill('#B9975B');
-      doc.fillColor('#000000')
-        .fontSize(16)
-        .font('Helvetica-Bold')
-        .text(`Total Fare: $${booking.totalFare} (GST inclusive)`, 60, totalY + 10);
+/* ---------- BOOKING DETAILS ---------- */
+doc.fontSize(12).fillColor('#000000')
+  .text('Booking Details', 60)
+  .moveTo(60, doc.y + 2).lineTo(180, doc.y + 2).stroke('#B9975B')
+  .moveDown(0.6);
 
-      /* ---------- FOOTER ---------- */
-      doc.moveDown(4);
-      doc.font('Helvetica')
-        .fontSize(9)
-        .fillColor('gray')
-        .text('Thank you for choosing Chauffeur de Luxe.', { align: 'center' })
-        .text('Premium Chauffeur Service | www.chauffeurdeluxe.com.au', { align: 'center' })
-        .text('All bookings are subject to terms and conditions.', { align: 'center' });
+const formattedDateTime = formatAustralianDateTime(booking.datetime);
+doc.fontSize(11)
+  .text(`Pickup: ${booking.pickup}`)
+  .text(`Dropoff: ${booking.dropoff}`)
+  .text(`Date/Time: ${formattedDateTime}`)
+  .text(`Vehicle: ${booking.vehicleType}`)
+  .text(`Distance: ${booking.distanceKm} km`)
+  .moveDown(2);
 
-      doc.end();
+/* ---------- TOTAL FARE (Gold highlight bar) ---------- */
+const totalY = doc.y;
+doc.rect(50, totalY, pageWidth - 100, 40).fill('#B9975B');
+doc.fillColor('#000000')
+  .font('Helvetica-Bold')
+  .fontSize(18)
+  .text(`Total Fare: $${booking.totalFare} (GST inclusive)`, 0, totalY + 12, { align: 'center' });
+
+/* ---------- FOOTER ---------- */
+doc.moveDown(4);
+doc.font('Helvetica')
+  .fontSize(9)
+  .fillColor('gray')
+  .text('Thank you for choosing Chauffeur de Luxe.', { align: 'center' })
+  .text('Premium Chauffeur Service | www.chauffeurdeluxe.com.au', { align: 'center' })
+  .text('All bookings are subject to terms and conditions.', { align: 'center' });
+
+doc.end();
 
       bufferStream.on('finish', async () => {
         const pdfBuffer = bufferStream.getContents();
