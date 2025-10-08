@@ -338,24 +338,42 @@ async function sendInvoicePDF(booking, sessionId) {
       const bufferStream = new streamBuffers.WritableStreamBuffer();
       doc.pipe(bufferStream);
       
-      /* ---------- HEADER (Centered, black background, gold text) ---------- */
-doc.rect(0, 0, doc.page.width, 110).fill('#000000');
+/* ---------- HEADER (Match website layout: black background, gold text) ---------- */
+const headerHeight = 90;
+doc.rect(0, 0, doc.page.width, headerHeight).fill('#000000');
 
-const pageWidth = doc.page.width;
-const logoWidth = 70;
-const logoX = (pageWidth - logoWidth) / 2; // center horizontally
+// Logo & text sizing + spacing
+const logoWidth = 55;
+const logoHeight = 55;
+const gap = 12;
 
-// Centered logo
-doc.image('./assets/icon.png', logoX, 20, { width: logoWidth });
+// Company name + tagline (same as your HTML)
+const companyName = 'CHAUFFEUR DE LUXE';
+const tagline = 'Driven by Distinction. Defined by Elegance.';
 
-// Centered company name + tagline under logo
-doc.fillColor('#B9975B')
-  .font('Helvetica-Bold')
-  .fontSize(22)
-  .text('CHAUFFEUR DE LUXE', 0, 95, { align: 'center' })
-  .font('Helvetica-Oblique')
-  .fontSize(11)
-  .text('Driven by Distinction. Defined by Elegance.', 0, 115, { align: 'center' });
+// Font styling
+doc.font('Helvetica-Bold').fontSize(22);
+const nameWidth = doc.widthOfString(companyName);
+doc.font('Helvetica').fontSize(10);
+const taglineWidth = doc.widthOfString(tagline);
+const textBlockWidth = Math.max(nameWidth, taglineWidth);
+
+// Total group width = logo + gap + widest text block
+const totalGroupWidth = logoWidth + gap + textBlockWidth;
+
+// Center horizontally on page
+const startX = (doc.page.width - totalGroupWidth) / 2;
+const logoY = 18;
+const textY = logoY + 8;
+
+// Draw logo
+doc.image('./assets/icon.png', startX, logoY, { width: logoWidth, height: logoHeight });
+
+// Draw text block beside logo (center-aligned with logo vertically)
+const textX = startX + logoWidth + gap;
+doc.fillColor('#B9975B');
+doc.font('Helvetica-Bold').fontSize(22).text(companyName, textX, textY);
+doc.font('Helvetica').fontSize(10).text(tagline, textX, textY + 25);
 
 /* ---------- INVOICE TITLE ---------- */
 doc.moveDown(3);
