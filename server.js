@@ -339,8 +339,11 @@ async function sendInvoicePDF(booking, sessionId) {
       doc.pipe(bufferStream);
       
 /* ---------- HEADER (Match website layout: black background, gold text) ---------- */
+const pageWidth = doc.page.width;
 const headerHeight = 90;
-doc.rect(0, 0, doc.page.width, headerHeight).fill('#000000');
+
+// Draw black background bar
+doc.rect(0, 0, pageWidth, headerHeight).fill('#000000');
 
 // Logo & text sizing + spacing
 const logoWidth = 55;
@@ -362,7 +365,7 @@ const textBlockWidth = Math.max(nameWidth, taglineWidth);
 const totalGroupWidth = logoWidth + gap + textBlockWidth;
 
 // Center horizontally on page
-const startX = (doc.page.width - totalGroupWidth) / 2;
+const startX = (pageWidth - totalGroupWidth) / 2;
 const logoY = 18;
 const textY = logoY + 8;
 
