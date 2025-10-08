@@ -424,7 +424,7 @@ doc.fontSize(11)
 
 /* ---------- TOTAL FARE (Gold highlight bar) ---------- */
 const totalY = doc.y;
-doc.rect(50, totalY, pageWidth - 100, 40).fill('#B9975B');
+doc.rect(50, totalY, pageWidth - 100, 50).fill('#B9975B');
 doc.fillColor('#000000')
   .font('Helvetica-Bold')
   .fontSize(18)
