@@ -383,7 +383,7 @@ doc.moveDown(3);
 doc.fillColor('#000000')
   .font('Helvetica-Bold')
   .fontSize(28)
-  .text('INVOICE', 40, 150, { align: 'center' }); // shifted 40px right
+  .text('INVOICE', 50, 150, { align: 'center' }); // shifted 40px right
 doc.moveDown(1.2);
 
 /* ---------- BUSINESS INFO (Top Left Corner) ---------- */
