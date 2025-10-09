@@ -422,10 +422,10 @@ doc.fontSize(11)
   .text(`Distance: ${booking.distanceKm} km`)
   .moveDown(2);
       
-/* ---------- TOTAL FARE (Gold highlight bar, centered) ---------- */
+/* ---------- TOTAL FARE (Perfectly centered gold bar) ---------- */
 const totalY = doc.y;
-const barWidth = pageWidth - 120; // slightly narrower for better balance
-const barX = (pageWidth - barWidth) / 2; // centers the bar perfectly
+const barWidth = pageWidth - 80; // wider for true center balance
+const barX = (pageWidth - barWidth) / 2; // perfectly centers the bar
 
 doc.rect(barX, totalY, barWidth, 50).fill('#B9975B');
 doc.fillColor('#000000')
@@ -433,8 +433,8 @@ doc.fillColor('#000000')
   .fontSize(18)
   .text(`Total Fare: $${booking.totalFare} (GST inclusive)`, 0, totalY + 15, { align: 'center' });
 
-/* ---------- FOOTER (Centered) ---------- */
-doc.moveDown(4);
+/* ---------- FOOTER (Centered properly) ---------- */
+doc.moveDown(3.5);
 doc.font('Helvetica')
   .fontSize(9)
   .fillColor('gray')
