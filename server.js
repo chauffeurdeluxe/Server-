@@ -422,25 +422,28 @@ doc.fontSize(11)
   .text(`Distance: ${booking.distanceKm} km`)
   .moveDown(2);
       
-/* ---------- TOTAL FARE (Perfectly centered gold bar) ---------- */
+/* ---------- TOTAL FARE (Gold highlight bar, shifted right) ---------- */
 const totalY = doc.y;
-const barWidth = pageWidth - 80; // wider for true center balance
-const barX = (pageWidth - barWidth) / 2; // perfectly centers the bar
-
+const barX = 80; // starting point of gold bar
+const barWidth = pageWidth - 160; // balanced margins on both sides
 doc.rect(barX, totalY, barWidth, 50).fill('#B9975B');
+
+// Move text slightly right (adjust "shiftX" if needed)
+const shiftX = 120; // ← increase to move further right
 doc.fillColor('#000000')
   .font('Helvetica-Bold')
   .fontSize(18)
-  .text(`Total Fare: $${booking.totalFare} (GST inclusive)`, 0, totalY + 15, { align: 'center' });
+  .text(`Total Fare: $${booking.totalFare} (GST inclusive)`, shiftX, totalY + 15);
 
-/* ---------- FOOTER (Centered properly) ---------- */
+/* ---------- FOOTER (Shifted right to match fare position) ---------- */
 doc.moveDown(3.5);
+const footerX = shiftX - 20; // keeps same right alignment feel
 doc.font('Helvetica')
   .fontSize(9)
   .fillColor('gray')
-  .text('Thank you for choosing Chauffeur de Luxe.', 0, doc.y, { align: 'center' })
-  .text('Premium Chauffeur Service | www.chauffeurdeluxe.com.au', { align: 'center' })
-  .text('All bookings are subject to terms and conditions.', { align: 'center' });
+  .text('Thank you for choosing Chauffeur de Luxe.', footerX, doc.y)
+  .text('Premium Chauffeur Service | www.chauffeurdeluxe.com.au', footerX, doc.y + 12)
+  .text('All bookings are subject to terms and conditions.', footerX, doc.y + 24);
       
 doc.end();
 
