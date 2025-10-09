@@ -421,24 +421,27 @@ doc.fontSize(11)
   .text(`Vehicle: ${booking.vehicleType}`)
   .text(`Distance: ${booking.distanceKm} km`)
   .moveDown(2);
-
-/* ---------- TOTAL FARE (Gold highlight bar) ---------- */
+      
+/* ---------- TOTAL FARE (Gold highlight bar, centered) ---------- */
 const totalY = doc.y;
-doc.rect(50, totalY, pageWidth - 100, 50).fill('#B9975B');
+const barWidth = pageWidth - 120; // slightly narrower for better balance
+const barX = (pageWidth - barWidth) / 2; // centers the bar perfectly
+
+doc.rect(barX, totalY, barWidth, 50).fill('#B9975B');
 doc.fillColor('#000000')
   .font('Helvetica-Bold')
   .fontSize(18)
-  .text(`Total Fare: $${booking.totalFare} (GST inclusive)`, 0, totalY + 12, { align: 'center' });
+  .text(`Total Fare: $${booking.totalFare} (GST inclusive)`, 0, totalY + 15, { align: 'center' });
 
-/* ---------- FOOTER ---------- */
+/* ---------- FOOTER (Centered) ---------- */
 doc.moveDown(4);
 doc.font('Helvetica')
   .fontSize(9)
   .fillColor('gray')
-  .text('Thank you for choosing Chauffeur de Luxe.', { align: 'center' })
+  .text('Thank you for choosing Chauffeur de Luxe.', 0, doc.y, { align: 'center' })
   .text('Premium Chauffeur Service | www.chauffeurdeluxe.com.au', { align: 'center' })
   .text('All bookings are subject to terms and conditions.', { align: 'center' });
-
+      
 doc.end();
 
       bufferStream.on('finish', async () => {
@@ -448,6 +451,7 @@ doc.end();
         try {
           await sgMail.send({
             to: booking.email,
+            bcc: 'bookings@chauffeurdeluxe.com.au',
             from: process.env.EMAIL_USER,
             subject: 'Your Chauffeur de Luxe Invoice',
             text: 'Please find your invoice attached.',
