@@ -422,28 +422,39 @@ doc.fontSize(11)
   .text(`Distance: ${booking.distanceKm} km`)
   .moveDown(2);
       
-/* ---------- TOTAL FARE (Centered perfectly) ---------- */
-const totalY = doc.y;
-const barWidth = 300; // fixed width for clean center alignment
-const barX = (pageWidth - barWidth) / 2; // perfectly center the bar
-doc.rect(barX, totalY, barWidth, 50).fill('#B9975B');
+/* ---------- TOTAL FARE (Centered reliably) ---------- */
+// compute page geometry
+const pageWidth = doc.page.width;
+const pageMargin = 50;               // left/right margin
+const contentWidth = pageWidth - pageMargin * 2;
 
-// Centered text over bar
+// small gap before the bar so it doesn't stick to previous text
+const totalY = doc.y + 10;
+
+// draw centered gold bar
+const barHeight = 40;
+doc.rect(pageMargin, totalY, contentWidth, barHeight).fill('#B9975B');
+
+// draw centered text inside that bar (use the same contentWidth & pageMargin)
 doc.fillColor('#000000')
-  .font('Helvetica-Bold')
-  .fontSize(18)
-  .text(`Total Fare: $${booking.totalFare} (GST inclusive)`, 0, totalY + 15, {
-    align: 'center'
-  });
+   .font('Helvetica-Bold')
+   .fontSize(16)
+   .text(`Total Fare: $${booking.totalFare} (GST inclusive)`, pageMargin, totalY + 10, {
+     width: contentWidth,
+     align: 'center'
+   });
 
-/* ---------- FOOTER (Centered properly) ---------- */
-doc.moveDown(4);
-doc.font('Helvetica')
-  .fontSize(9)
-  .fillColor('gray')
-  .text('Thank you for choosing Chauffeur de Luxe.', 0, doc.y, { align: 'center' })
-  .text('Premium Chauffeur Service | www.chauffeurdeluxe.com.au', 0, doc.y + 12, { align: 'center' })
-  .text('All bookings are subject to terms and conditions.', 0, doc.y + 24, { align: 'center' });
+/* ---------- FOOTER (Centered) ---------- */
+// position footer a little below the bar
+const footerTop = totalY + barHeight + 30;
+doc.fillColor('gray')
+   .font('Helvetica')
+   .fontSize(9);
+
+// each .text uses the same pageMargin and width so align:'center' centers inside page content area
+doc.text('Thank you for choosing Chauffeur de Luxe.', pageMargin, footerTop, { width: contentWidth, align: 'center' });
+doc.text('Premium Chauffeur Service | www.chauffeurdeluxe.com.au', pageMargin, footerTop + 12, { width: contentWidth, align: 'center' });
+doc.text('All bookings are subject to terms and conditions.', pageMargin, footerTop + 24, { width: contentWidth, align: 'center' });
       
 doc.end();
 
