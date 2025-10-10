@@ -339,7 +339,7 @@ async function sendInvoicePDF(booking, sessionId) {
       doc.pipe(bufferStream);
       
 /* ---------- HEADER (Match website layout: black background, gold text) ---------- */
-const pageWidth = doc.page.width;
+let pageWidth = doc.page.width;
 const headerHeight = 90;
 
 // Draw black background bar
