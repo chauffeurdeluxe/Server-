@@ -424,8 +424,8 @@ doc.fontSize(11)
       
 /* ---------- TOTAL FARE (Centered reliably) ---------- */
 // compute page geometry
-const pageWidth = doc.page.width;
-const pageMargin = 50;               // left/right margin
+pageWidth = doc.page.width;
+pageMargin = 50;               // left/right margin
 const contentWidth = pageWidth - pageMargin * 2;
 
 // small gap before the bar so it doesn't stick to previous text
